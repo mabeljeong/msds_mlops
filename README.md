@@ -60,11 +60,11 @@ Registered MLflow models should accept a **single-row** pandas DataFrame with co
 
 ## Build and run with Docker
 
-Use an image name that matches what you push to Docker Hub (below we use **`mabeljeong/rentiq-api:latest`** — change the namespace if your Docker Hub username is different).
+The image name must match your **Docker Hub username** (the account you use with `docker login`). This repo documents **`maniatwal/rentiq-api:latest`** — the image pushed under that namespace. If you use a different Hub user, substitute it everywhere below.
 
 ```bash
-docker build -t mabeljeong/rentiq-api:latest .
-docker run --rm -p 8000:8000 mabeljeong/rentiq-api:latest
+docker build -t maniatwal/rentiq-api:latest .
+docker run --rm -p 8000:8000 maniatwal/rentiq-api:latest
 ```
 
 With MLflow (tracking server on the host):
@@ -73,16 +73,18 @@ With MLflow (tracking server on the host):
 docker run --rm -p 8000:8000 \
   -e MLFLOW_TRACKING_URI=http://host.docker.internal:5000 \
   -e MLFLOW_MODEL_URI=models:/YourModelName/Production \
-  mabeljeong/rentiq-api:latest
+  maniatwal/rentiq-api:latest
 ```
 
 **Publish to Docker Hub** (run on your machine after `docker login`):
 
 ```bash
-docker push mabeljeong/rentiq-api:latest
+docker push maniatwal/rentiq-api:latest
 ```
 
-Take a **screenshot** of the image on Docker Hub showing **repository name + tag** (e.g. `mabeljeong/rentiq-api` and `latest`). That name must match the README and your PDF.
+Take a **screenshot** of the image on Docker Hub showing **repository name + tag** (e.g. `maniatwal/rentiq-api` and `latest`). That name must match the README and your PDF.
+
+**Why a push can fail:** Pushing `someoneelse/rentiq-api` only works if `docker login` is that Docker Hub user (or you are a collaborator). If your GitHub repo is under a different account than Docker Hub, that is normal — use your **Docker Hub** namespace for the image name, not necessarily your GitHub username.
 
 ## Example `/predict` request
 
@@ -143,13 +145,13 @@ With MLflow loaded, `model_source` is `"mlflow"` and `model_version` may be set.
 |------|--------|
 | 1 | *(Optional)* Run `python scripts/register_mlflow_placeholder.py`, export printed vars, confirm `GET /health` shows `"model_source":"mlflow"`. |
 | 2 | Run `uvicorn app.main:app --port 8000` and verify `GET /`, `GET /health`, `POST /predict`. |
-| 3 | `docker build -t mabeljeong/rentiq-api:latest .` — must finish with no errors. |
-| 4 | `docker run --rm -p 8000:8000 mabeljeong/rentiq-api:latest` and repeat the curl checks. |
-| 5 | `docker login` then `docker push mabeljeong/rentiq-api:latest`. |
+| 3 | `docker build -t maniatwal/rentiq-api:latest .` — must finish with no errors. |
+| 4 | `docker run --rm -p 8000:8000 maniatwal/rentiq-api:latest` and repeat the curl checks. |
+| 5 | `docker login` then `docker push maniatwal/rentiq-api:latest`. |
 | 6 | Screenshot Docker Hub showing image name + tag. |
 | 7 | `git add`, `git commit`, `git push` so GitHub has `app/`, `Dockerfile`, `README`. |
 | 8 | PDF: paste **repo URL** and **blob link** to `app/main.py` (links at top of this README). |
 | 9 | PDF: confirm README documents local run, Docker run, and `/predict` example (this file). |
 | 10 | Export submission PDF with repo link, endpoint file link, and Docker screenshot. |
 
-**Note:** Steps 3–6 require Docker Desktop (or Docker Engine) running on your machine. This README uses GitHub user `mabeljeong`; use your Docker Hub username in the image name if it differs.
+**Note:** Steps 3–6 require Docker Desktop (or Docker Engine) running on your machine. The GitHub repo is under `mabeljeong`; the Docker Hub image documented here is **`maniatwal/rentiq-api`** (Docker login user). Your PDF screenshot should show that same image name and tag.
