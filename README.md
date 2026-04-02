@@ -1,118 +1,65 @@
-# RentIQ (msds_mlops)
+# RentIQ API
 
-RentIQ is an end-to-end ML pipeline for rental market intelligence. This repository includes a **FastAPI inference service** for monthly rent prediction.
+FastAPI service for rent prediction (`/`, `/health`, `/predict`). Routes live in [`app/main.py`](app/main.py).
 
-## GitHub repository (for your PDF)
+**Repo:** https://github.com/mabeljeong/msds_mlops  
+**Endpoints file:** https://github.com/mabeljeong/msds_mlops/blob/main/app/main.py
 
-**Repository:** [https://github.com/mabeljeong/msds_mlops](https://github.com/mabeljeong/msds_mlops)
+---
 
-**Endpoints are defined in:** [app/main.py on `main`](https://github.com/mabeljeong/msds_mlops/blob/main/app/main.py)  
-(Copy that URL into your submission PDF as the direct link to the route definitions.)
+## Run locally (no Docker)
 
-## Run the API locally (without Docker)
-
-Requirements: Python 3.9+ (3.11+ recommended; the Docker image uses 3.11).
+Python 3.9+ recommended.
 
 ```bash
-git clone https://github.com/mabeljeong/msds_mlops.git
 cd msds_mlops
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-**Smoke test** (in another terminal):
+---
 
-```bash
-curl -s http://127.0.0.1:8000/
-curl -s http://127.0.0.1:8000/health
-curl -s -X POST http://127.0.0.1:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{"bedrooms":2,"bathrooms":1,"sqft":900,"walk_score":85,"transit_score":70,"median_zip_rent":3200}'
-```
+## Docker
 
-### (Optional) Connect a real MLflow model
-
-By default the API uses an in-process **placeholder** `LinearRegression` (no MLflow).
-
-To load a model from MLflow so `/health` shows `model_source: mlflow`:
-
-1. **Local file store (no server required)** — register the same placeholder into `./mlruns`:
-
-   ```bash
-   python scripts/register_mlflow_placeholder.py
-   ```
-
-   Copy the printed `export MLFLOW_TRACKING_URI=...` and `export MLFLOW_MODEL_URI=...` lines, run them in your shell, then start `uvicorn` again.
-
-2. **Remote tracking server** — set `MLFLOW_TRACKING_URI` to your server (e.g. `http://127.0.0.1:5000`) and `MLFLOW_MODEL_URI` to a registry URI such as `models:/YourModelName/Production`.
-
-| Variable | Purpose |
-|----------|---------|
-| `MLFLOW_TRACKING_URI` | Tracking store URI (e.g. `file:///absolute/path/to/mlruns` or `http://host:5000`) |
-| `MLFLOW_MODEL_URI` | Model URI, e.g. `runs:/<run_id>/model` or `models:/RentIQ-RentModel/Production` |
-| `MLFLOW_MODEL_VERSION` | Optional string echoed in `/predict` responses |
-
-If `MLFLOW_MODEL_URI` is set but loading fails, the service falls back to the placeholder and logs a warning.
-
-Registered MLflow models should accept a **single-row** pandas DataFrame with columns: `bedrooms`, `bathrooms`, `sqft`, `walk_score`, `transit_score`, `median_zip_rent`.
-
-## Build and run with Docker
-
-The image name must match your **Docker Hub username** (the account you use with `docker login`). This repo documents **`maniatwal/rentiq-api:latest`** — the image pushed under that namespace. If you use a different Hub user, substitute it everywhere below.
+Build and run (change `maniatwal` to your Docker Hub username if you push elsewhere):
 
 ```bash
 docker build -t maniatwal/rentiq-api:latest .
 docker run --rm -p 8000:8000 maniatwal/rentiq-api:latest
 ```
 
-With MLflow (tracking server on the host):
+Then open http://127.0.0.1:8000 or use the curl below.
 
-```bash
-docker run --rm -p 8000:8000 \
-  -e MLFLOW_TRACKING_URI=http://host.docker.internal:5000 \
-  -e MLFLOW_MODEL_URI=models:/YourModelName/Production \
-  maniatwal/rentiq-api:latest
+---
+
+## `POST /predict`
+
+**Request body (JSON):**
+
+```json
+{
+  "bedrooms": 2,
+  "bathrooms": 1,
+  "sqft": 900,
+  "walk_score": 85,
+  "transit_score": 70,
+  "median_zip_rent": 3200
+}
 ```
 
-**Publish to Docker Hub** (run on your machine after `docker login`):
+`transit_score` is optional (defaults to 50).
 
-```bash
-docker push maniatwal/rentiq-api:latest
-```
-
-Take a **screenshot** of the image on Docker Hub showing **repository name + tag** (e.g. `maniatwal/rentiq-api` and `latest`). That name must match the README and your PDF.
-
-**Why a push can fail:** Pushing `someoneelse/rentiq-api` only works if `docker login` is that Docker Hub user (or you are a collaborator). If your GitHub repo is under a different account than Docker Hub, that is normal — use your **Docker Hub** namespace for the image name, not necessarily your GitHub username.
-
-## Example `/predict` request
-
-**Input (JSON)** — validated by Pydantic before inference:
-
-| Field | Type | Notes |
-|-------|------|--------|
-| `bedrooms` | number | 0–20 |
-| `bathrooms` | number | 0–20 |
-| `sqft` | number | must be positive |
-| `walk_score` | number | 0–100 |
-| `transit_score` | number | optional, default `50`, 0–100 |
-| `median_zip_rent` | number | benchmark rent for the ZIP (USD/month) |
+**Example curl:**
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/predict \
   -H "Content-Type: application/json" \
-  -d '{
-    "bedrooms": 2,
-    "bathrooms": 1,
-    "sqft": 900,
-    "walk_score": 85,
-    "transit_score": 70,
-    "median_zip_rent": 3200
-  }'
+  -d '{"bedrooms":2,"bathrooms":1,"sqft":900,"walk_score":85,"transit_score":70,"median_zip_rent":3200}'
 ```
 
-**Example output** (numbers vary slightly with placeholder vs MLflow; shape is the same):
+**Example response** (placeholder model; numbers may differ slightly):
 
 ```json
 {
@@ -122,36 +69,6 @@ curl -s -X POST http://127.0.0.1:8000/predict \
 }
 ```
 
-With MLflow loaded, `model_source` is `"mlflow"` and `model_version` may be set.
-
-## Async `/predict`
-
-`POST /predict` uses `async def` and runs blocking inference in a worker thread via `asyncio.to_thread`. For CPU-only sklearn work, async helps less than for I/O-heavy handlers; see comments in `app/main.py`.
-
-## Project layout
-
-- [`app/main.py`](app/main.py) — FastAPI app and routes
-- [`app/schemas.py`](app/schemas.py) — Pydantic request/response models
-- [`app/model_loader.py`](app/model_loader.py) — MLflow vs placeholder loading
-- [`scripts/register_mlflow_placeholder.py`](scripts/register_mlflow_placeholder.py) — optional local MLflow registration helper
-- [`Dockerfile`](Dockerfile) — container image
-- [`requirements.txt`](requirements.txt) — dependencies
-
 ---
 
-## Assignment checklist (what to do locally)
-
-| Step | Action |
-|------|--------|
-| 1 | *(Optional)* Run `python scripts/register_mlflow_placeholder.py`, export printed vars, confirm `GET /health` shows `"model_source":"mlflow"`. |
-| 2 | Run `uvicorn app.main:app --port 8000` and verify `GET /`, `GET /health`, `POST /predict`. |
-| 3 | `docker build -t maniatwal/rentiq-api:latest .` — must finish with no errors. |
-| 4 | `docker run --rm -p 8000:8000 maniatwal/rentiq-api:latest` and repeat the curl checks. |
-| 5 | `docker login` then `docker push maniatwal/rentiq-api:latest`. |
-| 6 | Screenshot Docker Hub showing image name + tag. |
-| 7 | `git add`, `git commit`, `git push` so GitHub has `app/`, `Dockerfile`, `README`. |
-| 8 | PDF: paste **repo URL** and **blob link** to `app/main.py` (links at top of this README). |
-| 9 | PDF: confirm README documents local run, Docker run, and `/predict` example (this file). |
-| 10 | Export submission PDF with repo link, endpoint file link, and Docker screenshot. |
-
-**Note:** Steps 3–6 require Docker Desktop (or Docker Engine) running on your machine. The GitHub repo is under `mabeljeong`; the Docker Hub image documented here is **`maniatwal/rentiq-api`** (Docker login user). Your PDF screenshot should show that same image name and tag.
+Optional: load a model from MLflow by setting `MLFLOW_TRACKING_URI` and `MLFLOW_MODEL_URI` before starting the app. To log a small local model for testing, run `python scripts/register_mlflow_placeholder.py` and use the `export` lines it prints.
