@@ -94,4 +94,11 @@ docker run --rm -p 8000:8000 \
 
 If loading fails, the app falls back to the placeholder model.
 
-Local-only test (no remote server): run `python scripts/register_mlflow_placeholder.py` and use the printed `export` lines.
+**Log a run from your laptop** (shows up in the shared UI under experiment `team-project`):
+
+```bash
+export MLFLOW_TRACKING_URI="http://8.229.86.3:5000"
+python scripts/mlflow_team_example.py
+```
+
+Local-only test (no remote server): `python scripts/register_mlflow_placeholder.py` and use the printed `export` lines.
