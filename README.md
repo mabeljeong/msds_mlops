@@ -71,4 +71,27 @@ curl -s -X POST http://127.0.0.1:8000/predict \
 
 ---
 
-Optional: load a model from MLflow by setting `MLFLOW_TRACKING_URI` and `MLFLOW_MODEL_URI` before starting the app. To log a small local model for testing, run `python scripts/register_mlflow_placeholder.py` and use the `export` lines it prints.
+## MLflow
+
+Tracking UI: http://8.229.86.3:5000  
+
+Point the API at that server and at a registered model URI (from the Models tab), then start the app:
+
+```bash
+export MLFLOW_TRACKING_URI="http://8.229.86.3:5000"
+export MLFLOW_MODEL_URI="models:/YourRegisteredModelName/Production"   # example — use your real name and stage
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Docker:
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e MLFLOW_TRACKING_URI=http://8.229.86.3:5000 \
+  -e MLFLOW_MODEL_URI=models:/YourRegisteredModelName/Production \
+  maniatwal/rentiq-api:latest
+```
+
+If loading fails, the app falls back to the placeholder model.
+
+Local-only test (no remote server): run `python scripts/register_mlflow_placeholder.py` and use the printed `export` lines.
