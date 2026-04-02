@@ -46,6 +46,11 @@ class LoadedModel:
         return float(out[0])
 
 
+def build_placeholder_model() -> LinearRegression:
+    """Train the placeholder sklearn regressor (same as offline fallback)."""
+    return _build_placeholder()
+
+
 def _build_placeholder() -> LinearRegression:
     rng = np.random.default_rng(42)
     n = 500
