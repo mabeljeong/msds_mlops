@@ -13,7 +13,7 @@ import os
 
 import mlflow
 
-# Shared server — override with env if your instructor gives a different host
+# Shared server
 TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://8.229.86.3:5000")
 EXPERIMENT_NAME = os.environ.get("MLFLOW_EXPERIMENT_NAME", "team-project")
 
