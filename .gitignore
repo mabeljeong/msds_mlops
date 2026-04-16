@@ -11,3 +11,4 @@ mlruns/
 data/raw/
 data/processed/
 data/features/
+*.Zone.Identifier
