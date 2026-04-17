@@ -3,6 +3,10 @@ Integration tests (mocked HTTP) for scripts/fetch_census.py.
 """
 
 import math
+import os
+
+os.environ.setdefault("CENSUS_API_KEY", "test-census-key")
+
 from unittest.mock import MagicMock, patch
 
 import pandas as pd

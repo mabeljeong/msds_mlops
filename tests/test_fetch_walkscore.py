@@ -2,6 +2,10 @@
 Integration tests (mocked HTTP) for scripts/fetch_walkscore.py.
 """
 
+import os
+
+os.environ.setdefault("WALKSCORE_API_KEY", "test-walkscore-key")
+
 from unittest.mock import MagicMock, patch
 
 import pytest
