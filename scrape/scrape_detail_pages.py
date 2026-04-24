@@ -10,8 +10,8 @@ are skipped so you can Ctrl+C and restart safely.
 
 Usage:
   source .venv/bin/activate
-  python scrape_detail_pages.py --input data/sf_apartments_listings.csv
-  python scrape_detail_pages.py --input data/sf_apartments_listings.csv --chrome --delay 18
+  python scrape_detail_pages.py --input data/scraped/sf_apartments_listings.csv
+  python scrape_detail_pages.py --input data/scraped/sf_apartments_listings.csv --chrome --delay 18
 """
 
 from __future__ import annotations
@@ -103,6 +103,12 @@ def _collect_text(page, selectors: list[str]) -> list[str]:
 def extract_detail(page) -> dict:
     """Extract amenities from a detail page."""
     amenity_sels = [
+        # Primary target from site inspection:
+        # text under "Apartment Features" in li.specinfo nodes.
+        "section:has-text('Apartment Features') li.specinfo",
+        "div:has-text('Apartment Features') li.specinfo",
+        "li.specinfo",
+        # Fallbacks for occasional layout changes.
         ".amenityLabel",
         ".amenity span",
         ".specInfo.amenity",
@@ -113,6 +119,53 @@ def extract_detail(page) -> dict:
     ]
     amenities = _collect_text(page, amenity_sels)
     return {"amenities": " | ".join(amenities)}
+
+
+def merge_listing_and_details(listing: dict, details: dict) -> dict:
+    """Return enriched listing where detail-page values override source values."""
+    return {**listing, **details}
+
+
+def warm_up_session(page) -> None:
+    """Visit a browse page first to reduce immediate anti-bot challenges."""
+    try:
+        page.goto("https://www.apartments.com/san-francisco-ca/", wait_until="domcontentloaded")
+        dismiss_overlays(page)
+        page.wait_for_timeout(random.randint(4000, 8000))
+        human_scroll(page)
+        page.wait_for_timeout(random.randint(2000, 5000))
+    except Exception:
+        # Best-effort warmup: continue even if this fails.
+        pass
+
+
+def navigate_with_retries(page, url: str, max_retries: int) -> bool:
+    """Navigate to URL and return False only if repeatedly blocked/timed out."""
+    for attempt in range(max_retries + 1):
+        try:
+            page.goto(url, wait_until="domcontentloaded")
+        except PlaywrightTimeout:
+            if attempt == max_retries:
+                print("  Timeout — skipping.")
+                return False
+            page.wait_for_timeout(random.randint(2500, 5000))
+            continue
+
+        dismiss_overlays(page)
+        page.wait_for_timeout(random.randint(1800, 4000))
+        human_scroll(page)
+
+        if not looks_like_block(page):
+            return True
+
+        if attempt == max_retries:
+            print("  Blocked / challenge page detected after retries — skipping.")
+            return False
+
+        print("  Challenge detected, backing off and retrying...")
+        page.wait_for_timeout(random.randint(7000, 15000))
+        warm_up_session(page)
+    return False
 
 
 def load_input(path: Path) -> list[dict]:
@@ -143,6 +196,7 @@ def enrich(
     delay_sec: float,
     headless: bool,
     use_chrome: bool,
+    max_retries: int,
 ) -> None:
     listings = load_input(input_path)
     done_urls = load_done_urls(output_path)
@@ -179,29 +233,16 @@ def enrich(
         )
         page = context.new_page()
         page.set_default_timeout(60000)
+        warm_up_session(page)
 
         for idx, listing in enumerate(to_scrape, 1):
             url = listing["url"]
             print(f"[{idx}/{len(to_scrape)}] {url}")
-            try:
-                page.goto(url, wait_until="domcontentloaded")
-            except PlaywrightTimeout:
-                print("  Timeout — skipping.")
+            if not navigate_with_retries(page, url, max_retries=max_retries):
                 continue
 
-            dismiss_overlays(page)
-            page.wait_for_timeout(random.randint(1500, 3500))
-            human_scroll(page)
-
-            if looks_like_block(page):
-                print(
-                    "  Blocked / challenge page detected. Stopping.\n"
-                    "  Re-run to resume from where you left off (already-done rows are saved)."
-                )
-                break
-
             details = extract_detail(page)
-            merged = {**listing, **details}
+            merged = merge_listing_and_details(listing, details)
             append_row(output_path, merged, write_header=write_header)
             write_header = False
             print(f"  amenities={len(details['amenities'].split(' | ')) if details['amenities'] else 0}")
@@ -224,14 +265,14 @@ def main():
     ap.add_argument(
         "--input",
         type=Path,
-        default=Path("data/sf_apartments_listings.csv"),
-        help="Input listings CSV (default: data/sf_apartments_listings.csv)",
+        default=Path("data/scraped/sf_apartments_listings.csv"),
+        help="Input listings CSV (default: data/scraped/sf_apartments_listings.csv)",
     )
     ap.add_argument(
         "--output",
         type=Path,
-        default=Path("data/sf_apartments_enriched.csv"),
-        help="Output enriched CSV (default: data/sf_apartments_enriched.csv)",
+        default=Path("data/scraped/sf_apartments_listings_with_amenities.csv"),
+        help="Output enriched CSV (default: data/scraped/sf_apartments_listings_with_amenities.csv)",
     )
     ap.add_argument(
         "--delay",
@@ -249,6 +290,12 @@ def main():
         action="store_true",
         help="Use installed Google Chrome instead of bundled Chromium.",
     )
+    ap.add_argument(
+        "--max-retries",
+        type=int,
+        default=1,
+        help="Retries for blocked/timed-out detail pages (default: 1).",
+    )
     args = ap.parse_args()
     enrich(
         input_path=args.input,
@@ -256,6 +303,7 @@ def main():
         delay_sec=args.delay,
         headless=args.headless,
         use_chrome=args.chrome,
+        max_retries=max(0, args.max_retries),
     )
 
 
