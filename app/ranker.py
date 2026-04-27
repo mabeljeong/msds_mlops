@@ -49,18 +49,75 @@ def _safe_float(value: object) -> float | None:
     return v
 
 
-def _price_fairness(actual: float, predicted: float, p90: float | None) -> float:
-    """Above-p90 listings are penalized; in-band/below = 1.0."""
-    if p90 is not None and p90 > 0:
-        if actual <= p90:
-            return 1.0
-        overage_pct = (actual - p90) / p90  # >0
-        return float(max(0.0, 1.0 - min(overage_pct / 0.5, 1.0)))
+def _price_fairness_with_band(actual: float, p10: float, p90: float) -> float:
+    """Continuous score in [0, 1] using a calibrated p10/p90 band.
 
-    if predicted <= 0:
-        return 0.5
-    delta_pct = (actual - predicted) / predicted
-    return float(max(0.0, min(1.0, 1.0 - max(0.0, delta_pct))))
+        actual ≤ p10                   -> 1.00 (steal)
+        p10 < actual ≤ p90 (in-band)   -> linear 1.00 → 0.50
+        actual > p90                   -> linear 0.50 → 0.00 at 1.5× p90
+    """
+    if actual <= p10:
+        return 1.0
+    if actual <= p90:
+        return float(1.0 - 0.5 * (actual - p10) / (p90 - p10))
+    overage_pct = (actual - p90) / p90
+    return float(max(0.0, 0.5 - 0.5 * min(overage_pct / 0.5, 1.0)))
+
+
+def _price_fairness_batch(
+    actuals: list[float],
+    predicteds: list[float],
+    p10s: list[float | None],
+    p90s: list[float | None],
+) -> list[float]:
+    """Score every listing's price fairness, mixing band-based and rank-based fallback.
+
+    When a listing has a calibrated p10/p90 band we use it directly. When the band is
+    missing (placeholder model), we fall back to batch-rank normalization on
+    ``delta_pct = (actual - predicted) / predicted``: the listing with the lowest
+    delta in the batch gets 1.0, the highest gets 0.0, and ties share scores. This
+    keeps the score informative even when absolute predictions are biased.
+    """
+    n = len(actuals)
+    out: list[float] = [0.5] * n
+    fallback_idx: list[int] = []
+    fallback_deltas: list[float] = []
+
+    for i in range(n):
+        p10, p90 = p10s[i], p90s[i]
+        if p10 is not None and p90 is not None and p90 > p10 > 0:
+            out[i] = _price_fairness_with_band(actuals[i], p10, p90)
+            continue
+
+        predicted = predicteds[i]
+        if predicted > 0:
+            fallback_deltas.append((actuals[i] - predicted) / predicted)
+            fallback_idx.append(i)
+
+    if not fallback_idx:
+        return out
+
+    if len(fallback_idx) == 1:
+        # No batch to compare against; use a smooth single-listing curve.
+        d = fallback_deltas[0]
+        if d <= -0.10:
+            score = 1.0
+        elif d <= 0.0:
+            score = 1.0 - 0.15 * (d + 0.10) / 0.10
+        else:
+            score = max(0.0, 0.85 - 0.85 * min(d / 0.30, 1.0))
+        out[fallback_idx[0]] = float(score)
+        return out
+
+    # Batch-rank: lowest delta_pct (cheapest vs prediction) → 1.0
+    order = np.argsort(fallback_deltas)
+    ranks = np.empty(len(fallback_deltas), dtype=float)
+    ranks[order] = np.arange(len(fallback_deltas))
+    denom = max(1, len(fallback_deltas) - 1)
+    for k, idx in enumerate(fallback_idx):
+        out[idx] = float(1.0 - ranks[k] / denom)
+
+    return out
 
 
 def _affordability(actual: float, budget: float | None, batch_min: float) -> float:
@@ -125,13 +182,15 @@ def score_listings(
     finite_actuals = [a for a in actuals if a > 0]
     batch_min = min(finite_actuals) if finite_actuals else 0.0
 
-    out: list[ScoredListing] = []
-    for listing, flag, safety, actual in zip(listings, flag_results, safety_scores, actuals):
-        predicted = _safe_float(flag.get("predicted_rent_usd")) or 0.0
-        p90 = _safe_float(flag.get("fair_rent_p90"))
+    predicteds = [_safe_float(f.get("predicted_rent_usd")) or 0.0 for f in flag_results]
+    p10s = [_safe_float(f.get("fair_rent_p10")) for f in flag_results]
+    p90s = [_safe_float(f.get("fair_rent_p90")) for f in flag_results]
+    fairness_scores = _price_fairness_batch(actuals, predicteds, p10s, p90s)
 
+    out: list[ScoredListing] = []
+    for i, (listing, flag, safety, actual) in enumerate(zip(listings, flag_results, safety_scores, actuals)):
         components = {
-            "price_fairness": _price_fairness(actual, predicted, p90),
+            "price_fairness": fairness_scores[i],
             "safety": float(safety),
             "walk": _normalize_walk_transit(_safe_float(listing.get("walk_score"))),
             "transit": _normalize_walk_transit(_safe_float(listing.get("transit_score"))),

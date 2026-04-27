@@ -149,15 +149,24 @@ async function rerank() {
 
 // ----- Sliders ------------------------------------------------------------ //
 function initSliders() {
+  const debouncedRerank = debounce(rerank, 150);
   document.querySelectorAll(".slider-row").forEach((row) => {
     const range = row.querySelector("input[type=range]");
     const valueEl = row.querySelector(".value");
     valueEl.textContent = range.value;
     range.addEventListener("input", () => {
       valueEl.textContent = range.value;
+      debouncedRerank();
     });
-    range.addEventListener("change", rerank);
   });
+}
+
+function debounce(fn, wait) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), wait);
+  };
 }
 
 // ----- Map ---------------------------------------------------------------- //
@@ -241,11 +250,17 @@ function renderCards(items) {
 
 function buildCard(it) {
   const card = document.createElement("article");
-  card.className = "listing-card" + (it.flag_overpriced ? " flagged" : "");
+  const status = priceStatus(it);
+  card.className = `listing-card status-${status.kind}` + (it.flag_overpriced ? " flagged" : "");
   card.id = `card-${it.listing_id}`;
 
   const title = it.title || it.address || `${it.bedrooms || 0}-bed in ${it.zip_code}`;
   const subtitle = it.address || `ZIP ${it.zip_code}`;
+
+  const bandLabel =
+    it.fair_rent_p10 != null && it.fair_rent_p90 != null
+      ? `$${Math.round(it.fair_rent_p10).toLocaleString()} – $${Math.round(it.fair_rent_p90).toLocaleString()}`
+      : `~$${Math.round(it.predicted_rent_usd * 0.9).toLocaleString()} – $${Math.round(it.predicted_rent_usd * 1.1).toLocaleString()} (est.)`;
 
   card.innerHTML = `
     <div class="card-head">
@@ -263,7 +278,12 @@ function buildCard(it) {
       </span>
     </div>
 
-    ${rentBarHtml(it)}
+    <div class="kv-row">
+      <span class="label">Price status</span>
+      <span class="price-pill ${status.kind}" title="${escapeHtml(status.tooltip)}">${status.label}</span>
+    </div>
+
+    ${rentBarHtml(it, status)}
 
     <div class="kv-row">
       <span class="label">Asking</span>
@@ -275,9 +295,7 @@ function buildCard(it) {
     </div>
     <div class="kv-row">
       <span class="label">Fair band p10–p90</span>
-      <span>${it.fair_rent_p10 != null && it.fair_rent_p90 != null
-          ? `$${Math.round(it.fair_rent_p10).toLocaleString()} – $${Math.round(it.fair_rent_p90).toLocaleString()}`
-          : "—"}</span>
+      <span>${bandLabel}</span>
     </div>
 
     <div class="components">
@@ -287,7 +305,7 @@ function buildCard(it) {
     <div class="card-foot">
       <span>${it.bedrooms || 0} bed${it.bathrooms ? ` · ${it.bathrooms} bath` : ""} · ZIP ${it.zip_code}</span>
       ${it.url ? `<a href="${it.url}" target="_blank" rel="noopener">view ↗</a>` : ""}
-      ${it.flag_overpriced ? `<span class="flag-pill" title="${it.flag_reason || ""}">overpriced</span>` : ""}
+      ${it.flag_overpriced ? `<span class="flag-pill" title="${escapeHtml(it.flag_reason || "")}">overpriced</span>` : ""}
     </div>
   `;
 
@@ -302,38 +320,83 @@ function buildCard(it) {
   return card;
 }
 
-function rentBarHtml(it) {
+/**
+ * Decide a price-status verdict (`fair` / `over` / `under`) for the actual rent
+ * relative to the fair-rent band returned by /rank. We prefer the calibrated p10/p90
+ * band; if it's unavailable (e.g. placeholder model) we fall back to predicted ±10%.
+ * `flag_overpriced` from the backend is the source of truth and overrides the visual
+ * verdict when set.
+ */
+/**
+ * Per-listing price verdict. Pure function of this listing's `actual_rent_usd`
+ * vs its own fair-rent band. Nothing is hard-coded across listings.
+ *
+ *   actual > p90  →  "over"   (right of band)
+ *   actual < p10  →  "under"  (left of band)
+ *   otherwise     →  "fair"   (inside band)
+ *
+ * If the backend returned a calibrated band (real MLflow model), p10/p90 are used
+ * directly and the label is "Overpriced" / "Fair" / "Under fair". If only the
+ * placeholder is loaded (no band), we synthesize predicted ± 10% and append "(est.)"
+ * to the label so the user knows the comparison is uncalibrated — but the verdict
+ * still varies per listing based on its own price.
+ */
+function priceStatus(it) {
   const actual = Number(it.actual_rent_usd) || 0;
-  const p10 = it.fair_rent_p10;
-  const p90 = it.fair_rent_p90;
   const predicted = Number(it.predicted_rent_usd) || 0;
+  const hasBand = it.fair_rent_p10 != null && it.fair_rent_p90 != null;
+  const p10 = hasBand ? it.fair_rent_p10 : predicted * 0.9;
+  const p90 = hasBand ? it.fair_rent_p90 : predicted * 1.1;
 
-  const candidates = [actual, predicted];
-  if (p10 != null) candidates.push(p10);
-  if (p90 != null) candidates.push(p90);
-  const lo = Math.min(...candidates) * 0.85;
-  const hi = Math.max(...candidates) * 1.1;
+  let kind = "fair";
+  if (it.flag_overpriced || actual > p90) kind = "over";
+  else if (actual < p10) kind = "under";
 
-  const pct = (v) => `${((v - lo) / (hi - lo)) * 100}%`;
+  const baseLabel = kind === "over" ? "Overpriced" : kind === "under" ? "Under fair" : "Fair";
+  const label = hasBand ? baseLabel : `${baseLabel} (est.)`;
+  const tooltip = hasBand
+    ? `Actual $${Math.round(actual)} vs fair band $${Math.round(p10)}–$${Math.round(p90)}`
+    : `Actual $${Math.round(actual)} vs estimated band $${Math.round(p10)}–$${Math.round(p90)} (placeholder model — set MLFLOW_MODEL_URI for a calibrated band).`;
 
-  const bandHtml =
-    p10 != null && p90 != null
-      ? `<div class="rent-band" style="left:${pct(p10)}; width:${((p90 - p10) / (hi - lo)) * 100}%"></div>`
-      : "";
+  return { kind, label, tooltip, p10, p90, hasBand };
+}
 
-  let markerCls = "rent-marker";
-  if (p90 != null && actual > p90) markerCls += " over";
-  else if (p10 != null && actual < p10) markerCls += " under";
+function rentBarHtml(it, status) {
+  const actual = Number(it.actual_rent_usd) || 0;
+  const predicted = Number(it.predicted_rent_usd) || 0;
+  const { p10, p90, hasBand } = status;
+
+  // Bar spans both the band and the actual rent, with padding, so the marker is
+  // always inside the visible bar regardless of whether the listing is over/under.
+  const lo = Math.min(actual, p10) * 0.9;
+  const hi = Math.max(actual, p90) * 1.1;
+
+  const clamp = (n) => Math.max(2, Math.min(98, n));
+  const pct = (v) => `${clamp(((v - lo) / (hi - lo)) * 100)}%`;
+
+  const bandWidthPct = clamp(((p90 - p10) / (hi - lo)) * 100);
+  const bandClass = hasBand ? "rent-band" : "rent-band synthetic";
+  const bandTitle = hasBand
+    ? `Fair band p10–p90: $${Math.round(p10)}–$${Math.round(p90)}`
+    : `Estimated band (predicted ±10%): $${Math.round(p10)}–$${Math.round(p90)}`;
+
+  const predictedLine = hasBand
+    ? `<div class="rent-line" style="left:${pct(predicted)}" title="Predicted: $${Math.round(predicted)}"></div>`
+    : "";
+
+  const markerCls = `rent-marker ${status.kind}`;
 
   return `
-    <div class="rent-bar" title="actual=$${Math.round(actual)} · predicted=$${Math.round(predicted)}">
+    <div class="rent-bar" title="Actual $${Math.round(actual)} · Predicted $${Math.round(predicted)}${
+      hasBand ? "" : " (placeholder)"
+    }">
       <div class="rent-axis"></div>
-      ${bandHtml}
-      <div class="rent-line" style="left:${pct(predicted)}"></div>
+      <div class="${bandClass}" style="left:${pct(p10)}; width:${bandWidthPct}%" title="${escapeHtml(bandTitle)}"></div>
+      ${predictedLine}
       <div class="${markerCls}" style="left:${pct(actual)}"></div>
-      ${p10 != null ? `<div class="rent-tick" style="left:${pct(p10)}">$${Math.round(p10 / 100) / 10}k</div>` : ""}
-      ${p90 != null ? `<div class="rent-tick" style="left:${pct(p90)}">$${Math.round(p90 / 100) / 10}k</div>` : ""}
-      <div class="rent-tick predicted" style="left:${pct(actual)}; bottom: 32px;">
+      <div class="rent-tick" style="left:${pct(p10)}">$${(p10 / 1000).toFixed(1)}k</div>
+      <div class="rent-tick" style="left:${pct(p90)}">$${(p90 / 1000).toFixed(1)}k</div>
+      <div class="rent-tick actual-tick" style="left:${pct(actual)}; bottom: 32px;">
         $${Math.round(actual).toLocaleString()}
       </div>
     </div>
