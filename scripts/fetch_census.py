@@ -1,6 +1,6 @@
 """
 Fetch ZIP-level ACS 5-Year (2022) data for San Francisco from the Census API
-and save to data/processed/census_acs_sf.csv.
+and save to data/raw/census_acs_sf.csv.
 
 Usage:
     python scripts/fetch_census.py
@@ -16,7 +16,7 @@ load_dotenv()
 
 API_KEY = os.environ["CENSUS_API_KEY"]
 BASE_URL = "https://api.census.gov/data/2022/acs/acs5"
-OUT_PATH = Path(__file__).parents[1] / "data" / "processed" / "census_acs_sf.csv"
+OUT_PATH = Path(__file__).parents[1] / "data" / "raw" / "census_acs_sf.csv"
 
 CENSUS_SENTINEL = -666666666
 

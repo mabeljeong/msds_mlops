@@ -1,27 +1,20 @@
-"""Load MLflow pyfunc model or a sklearn placeholder with the same feature schema."""
+"""Load MLflow rent model or fallback placeholder."""
 
 from __future__ import annotations
 
 import logging
 import os
 from dataclasses import dataclass
+from typing import Any
 
 import mlflow
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
 
-logger = logging.getLogger(__name__)
+from app.rent_predictor import FEATURE_COLUMNS
 
-# Column order must match training and PredictRequest → dict mapping
-FEATURE_COLUMNS: list[str] = [
-    "bedrooms",
-    "bathrooms",
-    "sqft",
-    "walk_score",
-    "transit_score",
-    "median_zip_rent",
-]
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -34,16 +27,96 @@ class LoadedModel:
     version: str | None
     load_message: str | None = None
 
-    def predict_row(self, features: dict[str, float]) -> float:
-        row = pd.DataFrame([{c: features[c] for c in FEATURE_COLUMNS}])
+    @staticmethod
+    def _coerce_input(row: pd.DataFrame) -> pd.DataFrame:
+        out = row.copy()
+        out["zip_code"] = out["zip_code"].fillna("UNK").astype(str)
+        for col in FEATURE_COLUMNS:
+            if col != "zip_code":
+                if col not in out.columns:
+                    out[col] = np.nan
+                out[col] = pd.to_numeric(out[col], errors="coerce").astype(float)
+        return out
+
+    def predict_row(self, features: dict[str, Any]) -> dict[str, Any]:
+        row = pd.DataFrame([{c: features.get(c) for c in FEATURE_COLUMNS}])
+        row = self._coerce_input(row)
         if self.pyfunc_model is not None:
             raw = self.pyfunc_model.predict(row)
-        else:
-            assert self.sklearn_model is not None
-            X = row[FEATURE_COLUMNS].to_numpy(dtype=np.float64)
-            raw = self.sklearn_model.predict(X)
-        out = np.asarray(raw).ravel()
-        return float(out[0])
+            if isinstance(raw, pd.DataFrame):
+                rec = raw.iloc[0].to_dict()
+                return {
+                    "predicted_rent_usd": float(rec.get("predicted_rent_usd", float("nan"))),
+                    "fair_rent_p10": (
+                        float(rec["fair_rent_p10"]) if "fair_rent_p10" in rec and pd.notna(rec["fair_rent_p10"]) else None
+                    ),
+                    "fair_rent_p90": (
+                        float(rec["fair_rent_p90"]) if "fair_rent_p90" in rec and pd.notna(rec["fair_rent_p90"]) else None
+                    ),
+                }
+            arr = np.asarray(raw).ravel()
+            return {"predicted_rent_usd": float(arr[0]), "fair_rent_p10": None, "fair_rent_p90": None}
+
+        assert self.sklearn_model is not None
+        fallback_row = row.copy()
+        fallback_row["zip_code"] = (
+            fallback_row["zip_code"].astype("string").fillna("UNK").str.replace(r"\D", "", regex=True)
+        )
+        fallback_row["zip_code"] = pd.to_numeric(fallback_row["zip_code"], errors="coerce").fillna(0.0)
+        raw = self.sklearn_model.predict(fallback_row)
+        return {
+            "predicted_rent_usd": float(raw[0]),
+            "fair_rent_p10": None,
+            "fair_rent_p90": None,
+        }
+
+    def flag_overpriced(self, listing: dict[str, Any]) -> dict[str, Any]:
+        if self.pyfunc_model is not None:
+            row = pd.DataFrame([{c: listing.get(c) for c in FEATURE_COLUMNS}])
+            row = self._coerce_input(row)
+            if "actual_rent_usd" in listing:
+                row["actual_rent_usd"] = float(listing["actual_rent_usd"])
+            elif "rent_usd" in listing:
+                row["actual_rent_usd"] = float(listing["rent_usd"])
+            out = self.pyfunc_model.predict(row)
+            if isinstance(out, pd.DataFrame) and not out.empty:
+                rec = out.iloc[0].to_dict()
+                return {
+                    "predicted_rent_usd": float(rec.get("predicted_rent_usd", float("nan"))),
+                    "fair_rent_p10": (
+                        float(rec["fair_rent_p10"]) if "fair_rent_p10" in rec and pd.notna(rec["fair_rent_p10"]) else None
+                    ),
+                    "fair_rent_p90": (
+                        float(rec["fair_rent_p90"]) if "fair_rent_p90" in rec and pd.notna(rec["fair_rent_p90"]) else None
+                    ),
+                    "delta_usd": (
+                        float(rec["delta_usd"]) if "delta_usd" in rec and pd.notna(rec["delta_usd"]) else None
+                    ),
+                    "delta_pct": (
+                        float(rec["delta_pct"]) if "delta_pct" in rec and pd.notna(rec["delta_pct"]) else None
+                    ),
+                    "flag_overpriced": bool(rec.get("flag_overpriced", False)),
+                    "flag_reason": rec.get("flag_reason"),
+                    "top_shap_contributors": rec.get("top_shap_contributors") or [],
+                }
+
+        prediction = self.predict_row(listing)
+        predicted = float(prediction["predicted_rent_usd"])
+        actual = listing.get("actual_rent_usd", listing.get("rent_usd"))
+        delta_usd = (float(actual) - predicted) if actual is not None else None
+        delta_pct = (delta_usd / predicted) if (delta_usd is not None and predicted > 0) else None
+        return {
+            "predicted_rent_usd": round(predicted, 2),
+            "fair_rent_p10": prediction.get("fair_rent_p10"),
+            "fair_rent_p90": prediction.get("fair_rent_p90"),
+            "delta_usd": round(delta_usd, 2) if delta_usd is not None else None,
+            "delta_pct": round(delta_pct, 4) if delta_pct is not None else None,
+            "flag_overpriced": bool(
+                delta_usd is not None and delta_pct is not None and delta_usd >= 250 and delta_pct >= 0.10
+            ),
+            "flag_reason": "delta_pct_exceeds_threshold",
+            "top_shap_contributors": [],
+        }
 
 
 def build_placeholder_model() -> LinearRegression:
@@ -54,24 +127,44 @@ def build_placeholder_model() -> LinearRegression:
 def _build_placeholder() -> LinearRegression:
     rng = np.random.default_rng(42)
     n = 500
-    X = rng.uniform(
-        low=[0.5, 0.5, 400, 20, 20, 1500],
-        high=[4.0, 3.0, 2500, 98, 98, 6000],
-        size=(n, len(FEATURE_COLUMNS)),
+    data = pd.DataFrame(
+        {
+            "zip_code": [f"941{d}" for d in rng.integers(2, 9, size=n)],
+            "bedrooms": rng.uniform(0, 4, size=n),
+            "bathrooms": rng.uniform(1, 3, size=n),
+            "walk_score": rng.uniform(40, 100, size=n),
+            "transit_score": rng.uniform(40, 100, size=n),
+            "census_median_income": rng.uniform(60_000, 180_000, size=n),
+            "census_renter_ratio": rng.uniform(0.25, 0.9, size=n),
+            "census_vacancy_rate": rng.uniform(0.02, 0.15, size=n),
+            "crime_total_month_zip_log1p_latest": rng.uniform(0.0, 8.0, size=n),
+            "zori_baseline": rng.uniform(2_000, 5_500, size=n),
+            "zhvi_level": rng.uniform(600_000, 2_000_000, size=n),
+            "zhvi_12mo_delta": rng.uniform(-80_000, 120_000, size=n),
+            "redfin_mom_pct": rng.uniform(-0.05, 0.08, size=n),
+            "redfin_yoy_pct": rng.uniform(-0.1, 0.2, size=n),
+        }
     )
-    # Synthetic rent: base + weighted features + noise
+    data["bedrooms_x_census_income"] = data["bedrooms"] * data["census_median_income"]
+    data["walk_score_x_transit_score"] = data["walk_score"] * data["transit_score"]
+    data = data[FEATURE_COLUMNS]
+
     rent = (
-        800
-        + 350 * X[:, 0]
-        + 120 * X[:, 1]
-        + 0.45 * X[:, 2]
-        + 4.0 * X[:, 3]
-        + 3.0 * X[:, 4]
-        + 0.12 * X[:, 5]
+        500
+        + 320 * data["bedrooms"]
+        + 180 * data["bathrooms"]
+        + 6 * data["walk_score"]
+        + 0.02 * data["census_median_income"]
+        + 0.45 * data["zori_baseline"]
+        + 0.0005 * data["zhvi_level"]
+        + 2200 * data["redfin_yoy_pct"]
+        - 150 * data["crime_total_month_zip_log1p_latest"]
         + rng.normal(0, 80, size=n)
     )
+    encoded = data.copy()
+    encoded["zip_code"] = encoded["zip_code"].astype("category").cat.codes
     model = LinearRegression()
-    model.fit(X, rent)
+    model.fit(encoded, rent)
     return model
 
 

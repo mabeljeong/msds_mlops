@@ -191,8 +191,24 @@ def test_integration_build_clean_dataset(tmp_path: Path, monkeypatch: pytest.Mon
     monkeypatch.setattr(dc, "PATH_ZHVI", zhvi_path)
     monkeypatch.setattr(dc, "PATH_CENSUS", tmp_path / "does_not_exist_census.csv")
     monkeypatch.setattr(dc, "PATH_REDFIN", tmp_path / "does_not_exist_redfin.csv")
+    monkeypatch.setattr(dc, "PATH_CRIME", tmp_path / "does_not_exist_crime.csv")
+    monkeypatch.setattr(dc, "PATH_ZIP_POLYGONS", tmp_path / "does_not_exist_polygons.json")
     monkeypatch.setattr(dc, "DIR_SCRAPED", scraped)
     monkeypatch.setattr(dc, "OUT_PROCESSED", processed)
+
+    # Stub WalkScore enrichment so the integration test never hits the network;
+    # we only need to verify the score columns are present and persisted.
+    def _fake_enrich(listings):
+        out = listings.copy()
+        out["walk_score"] = 88
+        out["walk_description"] = "Very Walkable"
+        out["transit_score"] = 70
+        out["transit_description"] = "Excellent Transit"
+        out["bike_score"] = 65
+        out["bike_description"] = "Bikeable"
+        return out
+
+    monkeypatch.setattr(dc, "enrich_listings_with_walkscore", _fake_enrich)
 
     panel = dc.build_clean_dataset()
 
@@ -206,10 +222,29 @@ def test_integration_build_clean_dataset(tmp_path: Path, monkeypatch: pytest.Mon
         assert (processed / name).is_file(), f"expected {name} to be written"
     assert not (processed / "census_clean.csv").exists()
     assert not (processed / "redfin_metro_clean.csv").exists()
+    assert not (processed / "crime_zip_month.csv").exists()
 
     listings_out = pd.read_csv(processed / "listings_clean.csv")
+    # Crime features are added even when no crime data is available; zero-filled.
+    for col in dc.CRIME_FEATURE_COLUMNS:
+        assert col in listings_out.columns, f"missing {col}"
+    assert (listings_out["crime_total_month_zip"] == 0).all()
+    assert (listings_out["crime_total_month_zip_log1p"] == 0.0).all()
     assert set(listings_out["zip_code"].astype(str).str.zfill(5).unique()) == {"94103", "94110"}
     assert len(listings_out) == 3
+
+    # WalkScore columns are appended (stubbed values from monkeypatched enricher).
+    for col in (
+        "walk_score",
+        "walk_description",
+        "transit_score",
+        "transit_description",
+        "bike_score",
+        "bike_description",
+    ):
+        assert col in listings_out.columns, f"missing {col}"
+    assert (listings_out["walk_score"] == 88).all()
+    assert (listings_out["transit_score"] == 70).all()
 
     # Listing at 94110 was parsed from beds_baths with "900 sq ft"; sqft should be 900.
     valencia = listings_out.loc[listings_out["zip_code"].astype(str).str.zfill(5) == "94110"]
@@ -222,3 +257,96 @@ def test_integration_build_clean_dataset(tmp_path: Path, monkeypatch: pytest.Mon
     market = listings_out.loc[listings_out["zip_code"].astype(str).str.zfill(5) == "94103"]
     assert set(market["beds_baths"]) == {"Studio", "1 Bed"}
     assert set(market["rent_usd"]) == {2800.0, 3400.0}
+
+
+def test_enrich_listings_validates_complete_coverage(monkeypatch):
+    """``enrich_listings_with_walkscore`` raises when the underlying enricher
+    leaves nulls in any of the six score columns."""
+    listings = pd.DataFrame(
+        {
+            "zip_code": ["94103", "94110"],
+            "address": ["123 Market St", "500 Valencia St"],
+            "url": ["u1", "u2"],
+        }
+    )
+
+    monkeypatch.setenv("WALKSCORE_API_KEY", "test-key")
+
+    def _broken_enrich(df, **_kwargs):
+        out = df.copy()
+        out["walk_score"] = [88, None]
+        out["walk_description"] = ["Very Walkable", None]
+        out["transit_score"] = [70, None]
+        out["transit_description"] = ["Excellent Transit", None]
+        out["bike_score"] = [65, None]
+        out["bike_description"] = ["Bikeable", None]
+        return out
+
+    import fetch_walkscore as fw
+
+    monkeypatch.setattr(fw, "enrich_walkscore", _broken_enrich)
+
+    with pytest.raises(ValueError, match="WalkScore enrichment incomplete"):
+        dc.enrich_listings_with_walkscore(listings)
+
+
+def test_enrich_listings_raises_on_walkscore_api_error(monkeypatch):
+    """Permanent Walk Score API errors (invalid key / quota / IP block) must
+    propagate so we never silently write a listings file with empty score
+    columns."""
+    listings = pd.DataFrame(
+        {
+            "zip_code": ["94103"],
+            "address": ["123 Market St"],
+            "url": ["u1"],
+        }
+    )
+
+    monkeypatch.setenv("WALKSCORE_API_KEY", "test-key")
+
+    import fetch_walkscore as fw
+
+    def _exploding_enrich(df, **_kwargs):
+        raise fw.WalkScoreAPIError(fw.WS_STATUS_QUOTA_EXCEEDED, "quota exceeded")
+
+    monkeypatch.setattr(fw, "enrich_walkscore", _exploding_enrich)
+
+    with pytest.raises(fw.WalkScoreAPIError):
+        dc.enrich_listings_with_walkscore(listings)
+
+
+def test_enrich_listings_passes_when_complete(monkeypatch):
+    listings = pd.DataFrame(
+        {
+            "zip_code": ["94103"],
+            "address": ["123 Market St"],
+            "url": ["u1"],
+        }
+    )
+
+    monkeypatch.setenv("WALKSCORE_API_KEY", "test-key")
+
+    def _ok_enrich(df, **_kwargs):
+        out = df.copy()
+        out["walk_score"] = 88
+        out["walk_description"] = "Very Walkable"
+        out["transit_score"] = 70
+        out["transit_description"] = "Excellent Transit"
+        out["bike_score"] = 65
+        out["bike_description"] = "Bikeable"
+        return out
+
+    import fetch_walkscore as fw
+
+    monkeypatch.setattr(fw, "enrich_walkscore", _ok_enrich)
+
+    out = dc.enrich_listings_with_walkscore(listings)
+    for col in (
+        "walk_score",
+        "walk_description",
+        "transit_score",
+        "transit_description",
+        "bike_score",
+        "bike_description",
+    ):
+        assert out[col].notna().all()

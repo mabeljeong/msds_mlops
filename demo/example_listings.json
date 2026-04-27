@@ -1,0 +1,302 @@
+{
+  "generated_with": {
+    "feature_table": "data/features/listings_features.csv",
+    "n_sampled_listings": 30,
+    "random_state": 7,
+    "model_uri": "models:/RentIQRentPredictor/5",
+    "model_version": "5",
+    "scope": "rent_usd in [2000, 8000]"
+  },
+  "examples": [
+    {
+      "demo_label": "overpriced",
+      "zip_code": "94105",
+      "actual_rent_usd": 7908.0,
+      "predicted_rent_usd": 5757.93,
+      "fair_rent_p10": 4639.92,
+      "fair_rent_p90": 6880.18,
+      "flag_overpriced": true,
+      "flag_reason": "actual_rent_above_p90",
+      "delta_usd": 2150.07,
+      "delta_pct": 0.3734,
+      "request_payload": {
+        "zip_code": "94105",
+        "bedrooms": 1.0,
+        "census_median_income": 250001.0,
+        "census_renter_ratio": 0.6081932773109243,
+        "census_vacancy_rate": 0.1834459097244558,
+        "crime_total_month_zip_log1p_latest": 3.713572066704308,
+        "zori_baseline": 4693.540368967452,
+        "zhvi_level": 1050002.013901712,
+        "zhvi_12mo_delta": 4955.826649291324,
+        "redfin_mom_pct": 0.8,
+        "redfin_yoy_pct": 6.9,
+        "bedrooms_x_census_income": 250001.0,
+        "actual_rent_usd": 7908.0
+      },
+      "response": {
+        "predicted_rent_usd": 5757.93,
+        "fair_rent_p10": 4639.92,
+        "fair_rent_p90": 6880.18,
+        "delta_usd": 2150.07,
+        "delta_pct": 0.3734,
+        "flag_overpriced": true,
+        "flag_reason": "actual_rent_above_p90",
+        "top_shap_contributors": [
+          {
+            "feature": "numeric__bedrooms_x_census_income",
+            "shap_contribution_log_rent": 0.141576886177063
+          },
+          {
+            "feature": "numeric__zori_baseline",
+            "shap_contribution_log_rent": 0.05692606419324875
+          },
+          {
+            "feature": "numeric__census_median_income",
+            "shap_contribution_log_rent": 0.03422365337610245
+          },
+          {
+            "feature": "numeric__census_vacancy_rate",
+            "shap_contribution_log_rent": 0.01837250590324402
+          },
+          {
+            "feature": "numeric__census_renter_ratio",
+            "shap_contribution_log_rent": 0.017895039170980453
+          }
+        ]
+      }
+    },
+    {
+      "demo_label": "underpriced",
+      "zip_code": "94103",
+      "actual_rent_usd": 2527.0,
+      "predicted_rent_usd": 3924.03,
+      "fair_rent_p10": 2844.76,
+      "fair_rent_p90": 5373.41,
+      "flag_overpriced": false,
+      "flag_reason": "actual_rent_above_p90",
+      "delta_usd": -1397.03,
+      "delta_pct": -0.356,
+      "request_payload": {
+        "zip_code": "94103",
+        "bedrooms": 1.0,
+        "census_median_income": 111028.0,
+        "census_renter_ratio": 0.7951424287856071,
+        "census_vacancy_rate": 0.1719634521799583,
+        "crime_total_month_zip_log1p_latest": 6.974478911025045,
+        "zori_baseline": 3828.7190260858865,
+        "zhvi_level": 770970.7852562036,
+        "zhvi_12mo_delta": -18158.012119787512,
+        "redfin_mom_pct": 0.8,
+        "redfin_yoy_pct": 6.9,
+        "bedrooms_x_census_income": 111028.0,
+        "actual_rent_usd": 2527.0
+      },
+      "response": {
+        "predicted_rent_usd": 3924.03,
+        "fair_rent_p10": 2844.76,
+        "fair_rent_p90": 5373.41,
+        "delta_usd": -1397.03,
+        "delta_pct": -0.356,
+        "flag_overpriced": false,
+        "flag_reason": "actual_rent_above_p90",
+        "top_shap_contributors": [
+          {
+            "feature": "numeric__bedrooms_x_census_income",
+            "shap_contribution_log_rent": -0.0802299827337265
+          },
+          {
+            "feature": "numeric__census_renter_ratio",
+            "shap_contribution_log_rent": 0.020769456401467323
+          },
+          {
+            "feature": "numeric__zori_baseline",
+            "shap_contribution_log_rent": -0.01843992993235588
+          },
+          {
+            "feature": "numeric__walk_score_x_transit_score",
+            "shap_contribution_log_rent": -0.017209824174642563
+          },
+          {
+            "feature": "numeric__census_median_income",
+            "shap_contribution_log_rent": -0.01526563335210085
+          }
+        ]
+      }
+    },
+    {
+      "demo_label": "in_band",
+      "zip_code": "94108",
+      "actual_rent_usd": 5190.0,
+      "predicted_rent_usd": 5093.14,
+      "fair_rent_p10": 2749.21,
+      "fair_rent_p90": 6458.77,
+      "flag_overpriced": false,
+      "flag_reason": "actual_rent_above_p90",
+      "delta_usd": 96.86,
+      "delta_pct": 0.019,
+      "request_payload": {
+        "zip_code": "94108",
+        "bedrooms": 1.0,
+        "census_median_income": 68768.0,
+        "census_renter_ratio": 0.8989665278420484,
+        "census_vacancy_rate": 0.1862683569725116,
+        "crime_total_month_zip_log1p_latest": 4.727387818712341,
+        "zori_baseline": 2956.6560846560847,
+        "zhvi_level": 962185.4045139696,
+        "zhvi_12mo_delta": 22449.222948607523,
+        "redfin_mom_pct": 0.8,
+        "redfin_yoy_pct": 6.9,
+        "bedrooms_x_census_income": 68768.0,
+        "actual_rent_usd": 5190.0
+      },
+      "response": {
+        "predicted_rent_usd": 5093.14,
+        "fair_rent_p10": 2749.21,
+        "fair_rent_p90": 6458.77,
+        "delta_usd": 96.86,
+        "delta_pct": 0.019,
+        "flag_overpriced": false,
+        "flag_reason": "actual_rent_above_p90",
+        "top_shap_contributors": [
+          {
+            "feature": "numeric__bedrooms_x_census_income",
+            "shap_contribution_log_rent": -0.08705034106969833
+          },
+          {
+            "feature": "categorical__zip_code_94108",
+            "shap_contribution_log_rent": 0.08152952790260315
+          },
+          {
+            "feature": "numeric__census_vacancy_rate",
+            "shap_contribution_log_rent": 0.07043057680130005
+          },
+          {
+            "feature": "numeric__crime_total_month_zip_log1p_latest",
+            "shap_contribution_log_rent": 0.03914867341518402
+          },
+          {
+            "feature": "numeric__bedrooms",
+            "shap_contribution_log_rent": 0.030391875654459
+          }
+        ]
+      }
+    },
+    {
+      "demo_label": "in_band",
+      "zip_code": "94123",
+      "actual_rent_usd": 6580.0,
+      "predicted_rent_usd": 5530.77,
+      "fair_rent_p10": 3954.85,
+      "fair_rent_p90": 7068.93,
+      "flag_overpriced": false,
+      "flag_reason": "actual_rent_above_p90",
+      "delta_usd": 1049.23,
+      "delta_pct": 0.1897,
+      "request_payload": {
+        "zip_code": "94123",
+        "bedrooms": 2.0,
+        "census_median_income": 211854.0,
+        "census_renter_ratio": 0.7153628652214892,
+        "census_vacancy_rate": 0.1424530208122853,
+        "crime_total_month_zip_log1p_latest": 4.700480365792417,
+        "zori_baseline": 4004.9833333333336,
+        "zhvi_level": 2219456.792680929,
+        "zhvi_12mo_delta": 168039.93856586446,
+        "redfin_mom_pct": 0.8,
+        "redfin_yoy_pct": 6.9,
+        "bedrooms_x_census_income": 423708.0,
+        "actual_rent_usd": 6580.0
+      },
+      "response": {
+        "predicted_rent_usd": 5530.77,
+        "fair_rent_p10": 3954.85,
+        "fair_rent_p90": 7068.93,
+        "delta_usd": 1049.23,
+        "delta_pct": 0.1897,
+        "flag_overpriced": false,
+        "flag_reason": "actual_rent_above_p90",
+        "top_shap_contributors": [
+          {
+            "feature": "numeric__bedrooms_x_census_income",
+            "shap_contribution_log_rent": 0.17486710846424103
+          },
+          {
+            "feature": "numeric__bedrooms",
+            "shap_contribution_log_rent": 0.07243581116199493
+          },
+          {
+            "feature": "numeric__census_median_income",
+            "shap_contribution_log_rent": 0.03663469851016998
+          },
+          {
+            "feature": "numeric__zhvi_12mo_delta",
+            "shap_contribution_log_rent": -0.03293965384364128
+          },
+          {
+            "feature": "numeric__zori_baseline",
+            "shap_contribution_log_rent": -0.01957184448838234
+          }
+        ]
+      }
+    },
+    {
+      "demo_label": "edge_case",
+      "zip_code": "94130",
+      "actual_rent_usd": 5957.0,
+      "predicted_rent_usd": 5644.68,
+      "fair_rent_p10": 3417.85,
+      "fair_rent_p90": 5883.79,
+      "flag_overpriced": true,
+      "flag_reason": "actual_rent_above_p90",
+      "delta_usd": 312.32,
+      "delta_pct": 0.0553,
+      "request_payload": {
+        "zip_code": "94130",
+        "bedrooms": 2.0,
+        "bathrooms": 2.0,
+        "walk_score": 50.0,
+        "transit_score": 33.0,
+        "census_median_income": 96000.0,
+        "census_renter_ratio": 1.0,
+        "census_vacancy_rate": 0.067064083457526,
+        "redfin_mom_pct": 0.8,
+        "redfin_yoy_pct": 6.9,
+        "bedrooms_x_census_income": 192000.0,
+        "walk_score_x_transit_score": 1650.0,
+        "actual_rent_usd": 5957.0
+      },
+      "response": {
+        "predicted_rent_usd": 5644.68,
+        "fair_rent_p10": 3417.85,
+        "fair_rent_p90": 5883.79,
+        "delta_usd": 312.32,
+        "delta_pct": 0.0553,
+        "flag_overpriced": true,
+        "flag_reason": "actual_rent_above_p90",
+        "top_shap_contributors": [
+          {
+            "feature": "numeric__bathrooms",
+            "shap_contribution_log_rent": 0.10585441440343857
+          },
+          {
+            "feature": "numeric__bedrooms",
+            "shap_contribution_log_rent": 0.08344046771526337
+          },
+          {
+            "feature": "numeric__bedrooms_x_census_income",
+            "shap_contribution_log_rent": 0.07036283612251282
+          },
+          {
+            "feature": "numeric__walk_score",
+            "shap_contribution_log_rent": 0.03762845695018768
+          },
+          {
+            "feature": "categorical__zip_code_94130",
+            "shap_contribution_log_rent": -0.033381957560777664
+          }
+        ]
+      }
+    }
+  ]
+}
