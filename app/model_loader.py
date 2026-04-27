@@ -57,15 +57,41 @@ class LoadedModel:
             arr = np.asarray(raw).ravel()
             return {"predicted_rent_usd": float(arr[0]), "fair_rent_p10": None, "fair_rent_p90": None}
 
-        assert self.sklearn_model is not None
-        fallback_row = row.copy()
-        fallback_row["zip_code"] = (
-            fallback_row["zip_code"].astype("string").fillna("UNK").str.replace(r"\D", "", regex=True)
-        )
-        fallback_row["zip_code"] = pd.to_numeric(fallback_row["zip_code"], errors="coerce").fillna(0.0)
-        raw = self.sklearn_model.predict(fallback_row)
+        # Placeholder predictor — used only when MLFLOW_MODEL_URI isn't set.
+        #
+        # We *don't* use the LinearRegression instance fitted in `_build_placeholder`
+        # because it was trained on synthetic data and produces garbage on real SF
+        # listings (extreme negative or saturated values). Instead we use a small
+        # transparent formula anchored on `zori_baseline` (the ZIP-level Zillow rent
+        # index, which is a real SF benchmark) and scaled by the unit size and a
+        # few amenity adjustments. This still varies per listing in a plausible way
+        # so the SPA can be demoed end-to-end without the real model.
+        feats = row.iloc[0].to_dict()
+
+        def _f(key: str, default: float) -> float:
+            v = feats.get(key)
+            try:
+                if v is None or pd.isna(v):
+                    return default
+                return float(v)
+            except (TypeError, ValueError):
+                return default
+
+        bedrooms = max(0.0, min(_f("bedrooms", 1.0), 5.0))
+        bathrooms = max(1.0, min(_f("bathrooms", 1.0), 4.0))
+        walk_score = max(0.0, min(_f("walk_score", 80.0), 100.0))
+        transit_score = max(0.0, min(_f("transit_score", 80.0), 100.0))
+        zori = _f("zori_baseline", 3500.0)
+        if zori <= 0:
+            zori = 3500.0
+
+        size_mult = {0: 0.70, 1: 0.90, 2: 1.10, 3: 1.35, 4: 1.55, 5: 1.70}.get(int(bedrooms), 1.0)
+        amenity_mult = 1.0 + 0.0015 * (walk_score - 70) + 0.0010 * (transit_score - 70)
+        bath_bonus = 200.0 * max(0.0, bathrooms - 1.0)
+
+        predicted = float(np.clip(zori * size_mult * amenity_mult + bath_bonus, 1500.0, 12000.0))
         return {
-            "predicted_rent_usd": float(raw[0]),
+            "predicted_rent_usd": predicted,
             "fair_rent_p10": None,
             "fair_rent_p90": None,
         }
@@ -105,16 +131,21 @@ class LoadedModel:
         actual = listing.get("actual_rent_usd", listing.get("rent_usd"))
         delta_usd = (float(actual) - predicted) if actual is not None else None
         delta_pct = (delta_usd / predicted) if (delta_usd is not None and predicted > 0) else None
+
+        # IMPORTANT: the placeholder regressor is trained on synthetic data and is not
+        # accurate for real SF listings (it's only a smoke-test stand-in for the
+        # MLflow rent model). We therefore *never* assert "overpriced" from it — that
+        # verdict is reserved for the real registered model. The relative price gap
+        # is still surfaced in `delta_*` so /rank can use it for batch-relative
+        # price-fairness scoring.
         return {
             "predicted_rent_usd": round(predicted, 2),
             "fair_rent_p10": prediction.get("fair_rent_p10"),
             "fair_rent_p90": prediction.get("fair_rent_p90"),
             "delta_usd": round(delta_usd, 2) if delta_usd is not None else None,
             "delta_pct": round(delta_pct, 4) if delta_pct is not None else None,
-            "flag_overpriced": bool(
-                delta_usd is not None and delta_pct is not None and delta_usd >= 250 and delta_pct >= 0.10
-            ),
-            "flag_reason": "delta_pct_exceeds_threshold",
+            "flag_overpriced": False,
+            "flag_reason": "placeholder_model_no_overprice_verdict",
             "top_shap_contributors": [],
         }
 

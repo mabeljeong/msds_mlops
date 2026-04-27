@@ -1,6 +1,6 @@
 # RentIQ API
 
-FastAPI service for rent prediction (`/`, `/health`, `/predict`). Routes live in [`app/main.py`](app/main.py).
+FastAPI service for rent prediction and a single-page web UI. Endpoints: `/`, `/health`, `/predict`, `/flag_overpriced`, `/listings`, `/rank`. Routes live in [`app/main.py`](app/main.py); the SPA lives in [`web/`](web/).
 
 **Repo:** https://github.com/mabeljeong/msds_mlops  
 **Endpoints file:** https://github.com/mabeljeong/msds_mlops/blob/main/app/main.py
@@ -95,6 +95,32 @@ aren't available):
   ]
 }
 ```
+
+## Web UI (`/`) + `POST /rank`
+
+A single-page app (vanilla HTML/JS, no build step) ships at the API root. It lets a renter set five preference weights — price fairness, affordability, safety, walkability, transit — and re-ranks demo SF listings live against the model's predictions. 
+
+Under the hood the page calls `GET /listings` once for the demo set, then `POST /rank` whenever a slider, the budget, beds, or ZIP filter changes. `/rank` scores every listing through `flag_overpriced`, blends the model output with the user weights, and returns a sorted result.
+
+### How to run it
+
+```bash
+cd /Users/zsm/Documents/GitHub/msds_mlops
+
+# (one-time; only if listings_for_rank.json is stale)
+python scripts/build_rank_listings.py
+
+# with the registered MLflow XGBoost model — gives you real p10/p90 bands on the cards
+export MLFLOW_TRACKING_URI=http://8.229.86.3:5000
+export MLFLOW_MODEL_URI="models:/RentIQ/Production"   # or your real registered name+stage
+
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Then open <http://127.0.0.1:8000/> — the SPA loads, hits `/listings`, calls `/rank` automatically, and renders the map + cards. Slide a weight or change budget/beds/zip and it re-ranks.
+
+
+---
 
 ## Training
 
