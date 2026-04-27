@@ -63,6 +63,8 @@ class LoadedModel:
             fallback_row["zip_code"].astype("string").fillna("UNK").str.replace(r"\D", "", regex=True)
         )
         fallback_row["zip_code"] = pd.to_numeric(fallback_row["zip_code"], errors="coerce").fillna(0.0)
+        # The bare LinearRegression fallback can't accept NaN; impute optional features with 0.
+        fallback_row = fallback_row.fillna(0.0)
         raw = self.sklearn_model.predict(fallback_row)
         return {
             "predicted_rent_usd": float(raw[0]),

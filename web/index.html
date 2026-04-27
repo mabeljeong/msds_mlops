@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RentIQ — Find a fair-priced SF apartment</title>
+
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="/web/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo-dot"></span>
+        <h1>RentIQ</h1>
+        <span class="tagline">Fair rent. On demand.</span>
+      </div>
+      <div class="api-status" id="apiStatus">connecting…</div>
+    </header>
+
+    <main class="layout">
+      <aside class="sidebar">
+        <section class="card">
+          <h2>Your priorities</h2>
+          <p class="muted">Drag to weight what matters. Scores auto-normalize.</p>
+
+          <div class="slider-row" data-key="price_fairness">
+            <label>Price fairness <span class="value">50</span></label>
+            <input type="range" min="0" max="100" value="50" />
+          </div>
+          <div class="slider-row" data-key="affordability">
+            <label>Affordability <span class="value">50</span></label>
+            <input type="range" min="0" max="100" value="50" />
+          </div>
+          <div class="slider-row" data-key="safety">
+            <label>Safety <span class="value">30</span></label>
+            <input type="range" min="0" max="100" value="30" />
+          </div>
+          <div class="slider-row" data-key="walk">
+            <label>Walkability <span class="value">30</span></label>
+            <input type="range" min="0" max="100" value="30" />
+          </div>
+          <div class="slider-row" data-key="transit">
+            <label>Transit <span class="value">30</span></label>
+            <input type="range" min="0" max="100" value="30" />
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Filters</h2>
+          <label class="filter-row">
+            Budget (USD/mo)
+            <input id="budget" type="number" min="500" step="100" placeholder="e.g. 3500" value="4000" />
+          </label>
+          <label class="filter-row">
+            Bedrooms
+            <select id="beds">
+              <option value="">Any</option>
+              <option value="0">Studio</option>
+              <option value="1">1</option>
+              <option value="2" selected>2</option>
+              <option value="3">3+</option>
+            </select>
+          </label>
+          <label class="filter-row">
+            ZIP
+            <input id="zipFilter" type="text" inputmode="numeric" maxlength="5" placeholder="any 5-digit" />
+          </label>
+
+          <button id="rankBtn" class="primary">Rank listings</button>
+          <div class="muted" id="rankStatus"></div>
+        </section>
+
+        <section class="card legend">
+          <h2>How a card reads</h2>
+          <p class="muted">
+            The bar shows the model's <strong>p10–p90 fair-rent band</strong>. The
+            <span class="dot dot-actual"></span> is the actual asking rent. Inside the band
+            is fair; right of the band means we flag it as <em>overpriced</em>.
+          </p>
+        </section>
+      </aside>
+
+      <section class="main">
+        <div id="map"></div>
+
+        <div class="results-header">
+          <h2 id="resultsTitle">Top picks</h2>
+          <div class="muted" id="resultsMeta"></div>
+        </div>
+        <div id="cards" class="cards"></div>
+      </section>
+    </main>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="/web/app.js"></script>
+  </body>
+</html>

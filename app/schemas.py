@@ -63,3 +63,67 @@ class HealthResponse(BaseModel):
     model_loaded: bool
     model_source: str
     detail: Optional[str] = None
+
+
+class UserWeights(BaseModel):
+    """User preferences for the /rank composite score (any non-negative scale, auto-normalized)."""
+
+    price_fairness: float = Field(1.0, ge=0, le=100)
+    safety: float = Field(1.0, ge=0, le=100)
+    walk: float = Field(1.0, ge=0, le=100)
+    transit: float = Field(1.0, ge=0, le=100)
+    affordability: float = Field(1.0, ge=0, le=100)
+
+
+class RankRequestListing(FlagOverpricedRequest):
+    """A listing payload for ranking. Adds optional id/title/lat-lng for UI."""
+
+    listing_id: Optional[str] = Field(None, description="Stable id for the listing card")
+    title: Optional[str] = None
+    address: Optional[str] = None
+    url: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+class RankRequest(BaseModel):
+    listings: list[RankRequestListing] = Field(..., min_length=1, max_length=200)
+    weights: UserWeights = Field(default_factory=UserWeights)
+    budget_usd: Optional[float] = Field(
+        None, gt=0, le=100_000, description="Optional renter budget; drives the affordability score"
+    )
+    top_n: Optional[int] = Field(None, ge=1, le=200)
+
+
+class RankedListing(BaseModel):
+    listing_id: Optional[str] = None
+    title: Optional[str] = None
+    address: Optional[str] = None
+    url: Optional[str] = None
+    zip_code: str
+    bedrooms: float
+    bathrooms: Optional[float] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+    actual_rent_usd: float
+    predicted_rent_usd: float
+    fair_rent_p10: Optional[float] = None
+    fair_rent_p90: Optional[float] = None
+    delta_usd: Optional[float] = None
+    delta_pct: Optional[float] = None
+    flag_overpriced: bool
+    flag_reason: Optional[str] = None
+
+    component_scores: dict[str, float] = Field(
+        ..., description="price_fairness, safety, walk, transit, affordability — all in [0, 1]"
+    )
+    composite_score: float = Field(..., description="Weighted sum of component_scores, in [0, 1]")
+    rank: int
+
+
+class RankResponse(BaseModel):
+    weights_normalized: dict[str, float]
+    n_input: int
+    n_returned: int
+    results: list[RankedListing]
