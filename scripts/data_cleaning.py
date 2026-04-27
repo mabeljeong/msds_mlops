@@ -14,10 +14,13 @@ Final panel: inner join ZORI + ZHVI on (zip_code, date).
 
 from __future__ import annotations
 
+import json
+import os
 import re
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 # =============================================================================
@@ -83,10 +86,12 @@ ZILLOW_ID_COLS = [
 DATE_COL_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # Default input paths (override by editing this block or passing paths into cleaners)
-PATH_ZORI = REPO_ROOT / "data" / "raw" / "zori_wide.csv"
-PATH_ZHVI = REPO_ROOT / "data" / "raw" / "zhvi_wide.csv"
-PATH_CENSUS = REPO_ROOT / "data" / "processed" / "census_acs_sf.csv"
+PATH_ZORI = REPO_ROOT / "data" / "raw" / "zillow_observed_rent_index.csv"
+PATH_ZHVI = REPO_ROOT / "data" / "raw" / "zillow_home_value_index.csv"
+PATH_CENSUS = REPO_ROOT / "data" / "raw" / "census_acs_sf.csv"
 PATH_REDFIN = REPO_ROOT / "data" / "raw" / "redfin_median_asking_rent.csv"
+PATH_CRIME = REPO_ROOT / "data" / "raw" / "sf_crime_incidents.csv"
+PATH_ZIP_POLYGONS = REPO_ROOT / "data" / "raw" / "sf_zip_polygons.json"
 
 # All scrape outputs (CSV) go here; cleaning picks up every listings-shaped file
 DIR_SCRAPED = REPO_ROOT / "data" / "scraped"
@@ -98,7 +103,57 @@ OUT_PROCESSED = REPO_ROOT / "data" / "processed"
 LISTINGS_RENT_MIN = 500.0
 LISTINGS_RENT_MAX = 10000.0
 
+# WalkScore enrichment columns appended to listings_clean.csv
+WALKSCORE_COLUMNS = (
+    "walk_score",
+    "walk_description",
+    "transit_score",
+    "transit_description",
+    "bike_score",
+    "bike_description",
+)
+
 CENSUS_SENTINEL = -666666666
+
+# SFPD ``incident_category`` values grouped into broad signal types. Anything
+# not listed here counts toward ``crime_total_month_zip`` only.
+CRIME_VIOLENT_CATEGORIES = frozenset({
+    "Assault",
+    "Robbery",
+    "Sex Offense",
+    "Homicide",
+    "Weapons Offense",
+    "Weapons Carrying Etc",
+    "Weapons Offence",
+    "Human Trafficking, Commercial Sex Acts",
+    "Human Trafficking (A), Commercial Sex Acts",
+    "Human Trafficking (B), Involuntary Servitude",
+    "Human Trafficking",
+    "Rape",
+    "Offences Against The Family And Children",
+})
+CRIME_PROPERTY_CATEGORIES = frozenset({
+    "Larceny Theft",
+    "Burglary",
+    "Motor Vehicle Theft",
+    "Motor Vehicle Theft?",
+    "Vandalism",
+    "Malicious Mischief",
+    "Arson",
+    "Stolen Property",
+    "Embezzlement",
+    "Forgery And Counterfeiting",
+    "Fraud",
+    "Recovered Vehicle",
+})
+
+# Crime feature columns appended to listings after ZIP-month merge.
+CRIME_FEATURE_COLUMNS = (
+    "crime_total_month_zip",
+    "crime_violent_month_zip",
+    "crime_property_month_zip",
+    "crime_total_month_zip_log1p",
+)
 
 
 # =============================================================================
@@ -338,6 +393,229 @@ def clean_redfin(path: Path | str) -> Optional[pd.DataFrame]:
     return df
 
 
+# =============================================================================
+# 4b. Crime cleaning (SFPD incidents → ZIP-month features)
+# =============================================================================
+
+
+def _load_zip_polygons(path: Path | str) -> dict[str, "object"]:
+    """
+    Load a deck.gl-format SF ZIP polygons JSON into ``{zip_code: shapely.Polygon}``.
+
+    Input format (``data/raw/sf_zip_polygons.json``)::
+
+        [
+            {"zipcode": 94110, "population": ..., "area": ...,
+             "contour": [[lon, lat], [lon, lat], ...]},
+            ...
+        ]
+    """
+    from shapely.geometry import Polygon  # local import: keep module import light
+
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    out: dict[str, object] = {}
+    for entry in raw:
+        zip_series = standardize_zip(pd.Series([entry.get("zipcode")]))
+        zip_str = zip_series.iloc[0]
+        if pd.isna(zip_str):
+            continue
+        contour = entry.get("contour") or []
+        if len(contour) < 4:
+            continue
+        try:
+            poly = Polygon([(float(lon), float(lat)) for lon, lat in contour])
+        except (TypeError, ValueError):
+            continue
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+        out[str(zip_str)] = poly
+    return out
+
+
+def _assign_zip_by_point(
+    latitude: pd.Series,
+    longitude: pd.Series,
+    polygons: dict[str, "object"],
+) -> pd.Series:
+    """
+    Vectorized point-in-polygon ZIP assignment using shapely's STRtree.
+
+    ``latitude`` / ``longitude`` are float Series (NaN allowed). Returns a
+    string Series ``zip_code`` aligned with the input index, ``NA`` when no
+    polygon contains the point or coordinates are missing.
+    """
+    import shapely
+    from shapely.strtree import STRtree
+
+    lat = pd.to_numeric(latitude, errors="coerce").to_numpy()
+    lon = pd.to_numeric(longitude, errors="coerce").to_numpy()
+    out = pd.array([pd.NA] * len(lat), dtype="string")
+
+    if not polygons:
+        return pd.Series(out, index=latitude.index, name="zip_code")
+
+    zip_codes = list(polygons.keys())
+    polys = list(polygons.values())
+    tree = STRtree(polys)
+
+    valid_idx = np.where(~(np.isnan(lat) | np.isnan(lon)))[0]
+    if len(valid_idx) == 0:
+        return pd.Series(out, index=latitude.index, name="zip_code")
+
+    points = shapely.points(lon[valid_idx], lat[valid_idx])
+    point_idxs, poly_idxs = tree.query(points, predicate="within")
+
+    # One SF point should match at most one ZIP polygon. If polygon edges ever
+    # produce duplicates, keeping the first match is deterministic.
+    matched_points: set[int] = set()
+    for point_idx, poly_idx in zip(point_idxs, poly_idxs):
+        p = int(point_idx)
+        if p in matched_points:
+            continue
+        out[int(valid_idx[p])] = zip_codes[int(poly_idx)]
+        matched_points.add(p)
+
+    return pd.Series(out, index=latitude.index, name="zip_code")
+
+
+def clean_crime(
+    crime_path: Path | str = PATH_CRIME,
+    zip_polygons_path: Path | str = PATH_ZIP_POLYGONS,
+) -> Optional[pd.DataFrame]:
+    """
+    SFPD incidents → (zip_code, month) feature table.
+
+    Steps:
+      1. Load ``sf_crime_incidents.csv`` (output of ``scripts/fetch_sf_crime.py``).
+      2. Drop rows missing ``latitude`` / ``longitude`` or ``incident_date``.
+      3. Filter to ``incident_date >= START_DATE``.
+      4. Assign ``zip_code`` via point-in-polygon against SF ZIP polygons.
+      5. Bucket ``incident_category`` into violent / property flags.
+      6. Aggregate to (zip_code, month) with total + violent + property counts;
+         add a ``log1p`` of total for skew control.
+
+    Returns ``None`` when either input file is missing.
+    """
+    crime_path = Path(crime_path)
+    zip_polygons_path = Path(zip_polygons_path)
+
+    if not crime_path.is_file():
+        print(f"[Crime] Skip — file not found: {crime_path}")
+        return None
+    if not zip_polygons_path.is_file():
+        print(f"[Crime] Skip — ZIP polygons file not found: {zip_polygons_path}")
+        return None
+
+    df = pd.read_csv(crime_path, low_memory=False)
+    print(f"[Crime] Loaded: {len(df)} rows")
+
+    required = {"incident_date", "incident_category", "latitude", "longitude"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Crime CSV missing required columns: {sorted(missing)}")
+
+    df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
+    df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
+    has_coords = df["latitude"].notna() & df["longitude"].notna()
+    dropped = int((~has_coords).sum())
+    df = df.loc[has_coords].reset_index(drop=True)
+    print(f"  Dropped {dropped} rows missing lat/lon → {len(df)}")
+
+    df["incident_date"] = pd.to_datetime(df["incident_date"], errors="coerce")
+    df = df.loc[df["incident_date"].notna()].reset_index(drop=True)
+    df = _filter_from_start_date(df, "incident_date")
+    if df.empty:
+        print("[Crime] No incidents after date filter; returning empty feature table.")
+        return pd.DataFrame(columns=["zip_code", "month", *CRIME_FEATURE_COLUMNS])
+
+    polygons = _load_zip_polygons(zip_polygons_path)
+    print(f"  Loaded {len(polygons)} ZIP polygons: {sorted(polygons)[:6]}...")
+
+    df["zip_code"] = _assign_zip_by_point(df["latitude"], df["longitude"], polygons)
+    assigned = df["zip_code"].notna().sum()
+    print(f"  Assigned ZIP for {assigned}/{len(df)} incidents ({assigned / max(len(df), 1):.1%})")
+    df = df.loc[df["zip_code"].notna()].reset_index(drop=True)
+
+    df["month"] = df["incident_date"].dt.to_period("M").dt.to_timestamp()
+    cat = df["incident_category"].astype("string").fillna("")
+    df["_is_violent"] = cat.isin(CRIME_VIOLENT_CATEGORIES)
+    df["_is_property"] = cat.isin(CRIME_PROPERTY_CATEGORIES)
+
+    agg = (
+        df.groupby(["zip_code", "month"], as_index=False)
+        .agg(
+            crime_total_month_zip=("incident_date", "size"),
+            crime_violent_month_zip=("_is_violent", "sum"),
+            crime_property_month_zip=("_is_property", "sum"),
+        )
+    )
+    agg["crime_violent_month_zip"] = agg["crime_violent_month_zip"].astype("int64")
+    agg["crime_property_month_zip"] = agg["crime_property_month_zip"].astype("int64")
+    agg["crime_total_month_zip_log1p"] = np.log1p(agg["crime_total_month_zip"]).astype("float64")
+
+    print(
+        f"[Crime] Done: {len(agg)} (zip, month) rows; "
+        f"zips={agg['zip_code'].nunique()}, "
+        f"months {agg['month'].min().date()}..{agg['month'].max().date()}"
+    )
+    return agg
+
+
+def merge_crime_into_listings(
+    listings: pd.DataFrame,
+    crime: Optional[pd.DataFrame],
+) -> pd.DataFrame:
+    """
+    Left-join ZIP-month crime features onto listings.
+
+    Listings keep their row count; missing (zip, month) combinations get ``0``
+    for count features and ``log1p(0) = 0.0`` for the log feature so models
+    receive a stable, non-null schema.
+    """
+    out = listings.copy()
+    if "date" not in out.columns or "zip_code" not in out.columns:
+        for col in CRIME_FEATURE_COLUMNS:
+            out[col] = pd.NA
+        return out
+
+    out["_listing_month"] = pd.to_datetime(out["date"], errors="coerce").dt.to_period("M").dt.to_timestamp()
+    out["zip_code"] = standardize_zip(out["zip_code"])
+
+    if crime is None or crime.empty:
+        for col in CRIME_FEATURE_COLUMNS:
+            out[col] = 0 if col != "crime_total_month_zip_log1p" else 0.0
+        out = out.drop(columns=["_listing_month"])
+        print("[Crime/Merge] No crime features available; filled with zeros.")
+        return out
+
+    feat = crime.rename(columns={"month": "_listing_month"}).copy()
+    feat["zip_code"] = standardize_zip(feat["zip_code"])
+
+    n0 = len(out)
+    merged = out.merge(feat, on=["zip_code", "_listing_month"], how="left")
+    assert len(merged) == n0, "left-join changed listings row count"
+
+    fill_zero = {
+        "crime_total_month_zip": 0,
+        "crime_violent_month_zip": 0,
+        "crime_property_month_zip": 0,
+        "crime_total_month_zip_log1p": 0.0,
+    }
+    for col, val in fill_zero.items():
+        if col not in merged.columns:
+            merged[col] = val
+        else:
+            merged[col] = merged[col].fillna(val)
+    merged["crime_total_month_zip"] = merged["crime_total_month_zip"].astype("int64")
+    merged["crime_violent_month_zip"] = merged["crime_violent_month_zip"].astype("int64")
+    merged["crime_property_month_zip"] = merged["crime_property_month_zip"].astype("int64")
+    merged["crime_total_month_zip_log1p"] = merged["crime_total_month_zip_log1p"].astype("float64")
+
+    matched = (merged["crime_total_month_zip"] > 0).sum()
+    print(f"[Crime/Merge] Joined crime features into {matched}/{n0} listing rows")
+    return merged.drop(columns=["_listing_month"])
+
+
 ZIP_IN_ADDRESS = re.compile(r"\bCA\s+(\d{5})\b", re.IGNORECASE)
 FIRST_RENT = re.compile(r"\$\s*([\d,]+)\+?")
 # All floorplan + rent pairs in a pricing line (same listing, multiple units)
@@ -347,6 +625,7 @@ FLOORPLAN_RENT_RE = re.compile(
 )
 SQFT_RE = re.compile(r"([\d,]+)\s*sq\.?\s*ft\.?", re.IGNORECASE)
 RAW_SQFT_COLUMNS = ("sqft", "square_feet", "sq_ft", "square_feet_listed")
+LISTINGS_OUTPUT_COLUMNS = ["zip_code", "date", "rent_usd", "beds_baths", "sqft", "address", "url"]
 
 
 def _extract_sqft_from_text(text: object) -> Optional[float]:
@@ -466,8 +745,12 @@ def clean_listings(path: Path | str) -> Optional[pd.DataFrame]:
                 }
             )
 
-    out = pd.DataFrame.from_records(records)
+    out = pd.DataFrame.from_records(records, columns=LISTINGS_OUTPUT_COLUMNS)
     print(f"  Expanded scrape rows → floorplan rows: {n0} → {len(out)} (one row per unit type / price)")
+
+    if out.empty:
+        print(f"[Listings] Done ({Path(path).name}): 0 rows (no parsable rents)")
+        return out
 
     out["rent_usd"] = pd.to_numeric(out["rent_usd"], errors="coerce")
     out["sqft"] = pd.to_numeric(out["sqft"], errors="coerce")
@@ -504,6 +787,9 @@ def discover_scraped_listing_csvs() -> list[Path]:
     DIR_SCRAPED.mkdir(parents=True, exist_ok=True)
     found: list[Path] = []
     for p in sorted(DIR_SCRAPED.glob("*.csv")):
+        if p.stem.endswith("_clean"):
+            print(f"[Listings] Skip {p.name} (derived clean listing file)")
+            continue
         try:
             cols = set(pd.read_csv(p, nrows=0).columns)
         except (OSError, pd.errors.ParserError, UnicodeDecodeError) as exc:
@@ -515,6 +801,75 @@ def discover_scraped_listing_csvs() -> list[Path]:
             missing = LISTINGS_SCRAPE_REQUIRED_COLS - cols
             print(f"[Listings] Skip {p.name} (not a listings scrape; missing columns {sorted(missing)})")
     return found
+
+
+def enrich_listings_with_walkscore(listings: pd.DataFrame) -> pd.DataFrame:
+    """
+    Append WalkScore / Transit / Bike score columns to cleaned listings.
+
+    Geocodes ``address`` to lat/lon (Nominatim), then calls the WalkScore API
+    via :mod:`fetch_walkscore`. With ``ensure_complete=True``, missing scores
+    are imputed from ZIP/global means so every row has at least a
+    ``walk_score`` populated.
+
+    Failure modes:
+      * No API key configured -> log and return null-filled columns (allows
+        the rest of the pipeline to keep running locally).
+      * Permanent API errors (invalid key, quota exceeded, IP blocked) ->
+        re-raised as :class:`WalkScoreAPIError` so we never silently write a
+        listings file with empty score columns.
+      * Other transient errors -> logged with a non-null walk_score check at
+        the end (which raises if any row is still missing a walk_score).
+    """
+    out = listings.copy()
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(REPO_ROOT / ".env")
+    except ImportError:
+        pass
+
+    if not os.environ.get("WALKSCORE_API_KEY"):
+        print("[Listings] WALKSCORE_API_KEY not set; skipping WalkScore enrichment.")
+        for col in WALKSCORE_COLUMNS:
+            if col not in out.columns:
+                out[col] = pd.NA
+        return out
+
+    try:
+        from fetch_walkscore import WalkScoreAPIError, enrich_walkscore  # local import
+    except ImportError as exc:
+        print(f"[Listings] WalkScore module unavailable ({exc}); skipping enrichment.")
+        for col in WALKSCORE_COLUMNS:
+            if col not in out.columns:
+                out[col] = pd.NA
+        return out
+
+    print(f"[Listings] Enriching {len(out)} rows with WalkScore (geocode + API)...")
+    try:
+        enriched = enrich_walkscore(out, ensure_complete=True)
+    except WalkScoreAPIError:
+        # Invalid key / quota / IP block — never silently write blank scores.
+        raise
+    except Exception as exc:
+        print(f"[Listings] WalkScore enrichment failed: {exc}")
+        for col in WALKSCORE_COLUMNS:
+            if col not in out.columns:
+                out[col] = pd.NA
+        return out
+
+    n_scored = int(enriched["walk_score"].notna().sum()) if "walk_score" in enriched.columns else 0
+    print(f"[Listings] WalkScore: scored {n_scored}/{len(enriched)} rows")
+
+    missing = {col: int(enriched[col].isna().sum()) for col in WALKSCORE_COLUMNS if col in enriched.columns}
+    incomplete = {col: n for col, n in missing.items() if n > 0}
+    if incomplete:
+        raise ValueError(
+            "WalkScore enrichment incomplete; nulls remain in: "
+            + ", ".join(f"{c}={n}" for c, n in incomplete.items())
+        )
+    print("[Listings] WalkScore: all six score columns are non-null.")
+    return enriched
 
 
 def clean_all_scraped_listings() -> Optional[pd.DataFrame]:
@@ -553,6 +908,7 @@ def build_clean_dataset() -> Optional[pd.DataFrame]:
     zhvi = clean_zhvi(PATH_ZHVI)
     census = clean_census(PATH_CENSUS)
     redfin = clean_redfin(PATH_REDFIN)
+    crime = clean_crime(PATH_CRIME, PATH_ZIP_POLYGONS)
     listings = clean_all_scraped_listings()
 
     if census is not None:
@@ -561,7 +917,12 @@ def build_clean_dataset() -> Optional[pd.DataFrame]:
     if redfin is not None:
         redfin.to_csv(OUT_PROCESSED / "redfin_metro_clean.csv", index=False)
         print(f"[Write] {OUT_PROCESSED / 'redfin_metro_clean.csv'}")
+    if crime is not None:
+        crime.to_csv(OUT_PROCESSED / "crime_zip_month.csv", index=False)
+        print(f"[Write] {OUT_PROCESSED / 'crime_zip_month.csv'}")
     if listings is not None:
+        listings = enrich_listings_with_walkscore(listings)
+        listings = merge_crime_into_listings(listings, crime)
         listings.to_csv(OUT_PROCESSED / "listings_clean.csv", index=False)
         print(f"[Write] {OUT_PROCESSED / 'listings_clean.csv'}")
     if zori is not None:

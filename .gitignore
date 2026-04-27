@@ -11,4 +11,16 @@ mlruns/
 data/raw/
 data/processed/
 data/features/
+# Large ML/model artifacts
+models/
+artifacts/
+checkpoints/
+*.pkl
+*.joblib
+*.parquet
+*.feather
+*.h5
+*.onnx
+*.pt
+*.pth
 *.Zone.Identifier
