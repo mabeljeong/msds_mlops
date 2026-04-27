@@ -1,19 +1,14 @@
 """
-Unit tests for the apartments.com SF scrape output.
+Unit tests for the cleaned apartments.com SF listings.
 
 These tests validate the shape and per-column correctness of
-``data/scraped/sf_apartments_listings.csv`` so that data-quality regressions in
-the scraper (``scrape/scrape_apartments_sf.py``) are caught before the cleaning
-pipeline consumes the file.
+``data/scraped/sf_apartments_listings_clean.csv``, which is produced by
+``scripts/clean_combined_listings.py`` (explodes multi-unit rows, extracts
+zip_code, fills missing addresses, and normalises pricing/beds_baths).
 
 Run from the repo root:
 
     pytest tests/test_sf_apartments_csv.py -v
-
-Most tests are strict (they fail on any bad row). A handful of tests that the
-current scrape is known to violate are marked with
-``@pytest.mark.xfail(strict=False)`` so the suite still reports them without
-failing CI; flip them to plain asserts once the scraper is fixed.
 """
 
 from __future__ import annotations
@@ -25,26 +20,29 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CSV_PATH = REPO_ROOT / "data" / "scraped" / "sf_apartments_listings.csv"
+CSV_PATH = REPO_ROOT / "data" / "scraped" / "sf_apartments_listings_clean.csv"
 
 EXPECTED_COLUMNS = [
     "title",
-    "pricing",
     "beds_baths",
+    "pricing",
     "address",
-    "amenities",
+    "zip_code",
     "url",
     "scraped_at",
 ]
 
-REQUIRED_COLUMNS = ("title", "pricing", "beds_baths", "url")
+REQUIRED_COLUMNS = ("title", "pricing", "beds_baths", "address", "zip_code", "url")
 
 URL_PREFIX = "https://www.apartments.com/"
 URL_PATH_RE = re.compile(r"^https://www\.apartments\.com/[a-z0-9\-/]+/[a-z0-9]+/?$")
 SCRAPED_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC$")
 ADDRESS_ZIP_RE = re.compile(r",\s*CA\s+9\d{4}\s*$")
 BEDS_BATHS_RE = re.compile(r"(?i)\b(studio|bed|beds)\b")
+UNIT_TYPE_RE = re.compile(r"(?i)^(studio|\d+\s+beds?\+?)$")
 DOLLAR_RE = re.compile(r"\$\s?\d")
+CLEAN_PRICE_RE = re.compile(r"^\$[\d,]+\+?$")
+ZIP_CODE_RE = re.compile(r"^\d{5}$")
 PRICE_ONLY_TITLE_RE = re.compile(r"^\s*\$[\d,]+\+?\s*$")
 
 
@@ -155,20 +153,22 @@ def test_urls_match_expected_shape(rows):
     )
 
 
-def test_urls_are_unique(rows):
-    seen: dict[str, int] = {}
-    dupes: list[tuple[str, list[int]]] = []
+def test_url_unit_type_combo_is_unique(rows):
+    # After exploding, the same URL appears once per unit type — but the
+    # (url, beds_baths) pair must still be unique.
+    seen: dict[tuple[str, str], int] = {}
+    dupes: list[tuple[tuple[str, str], list[int]]] = []
     for idx, row in enumerate(rows, start=1):
-        url = (row.get("url") or "").strip()
-        if not url:
+        key = ((row.get("url") or "").strip(), (row.get("beds_baths") or "").strip())
+        if not key[0]:
             continue
-        if url in seen:
-            dupes.append((url, [seen[url], idx]))
+        if key in seen:
+            dupes.append((key, [seen[key], idx]))
         else:
-            seen[url] = idx
+            seen[key] = idx
     assert not dupes, (
-        f"{len(dupes)} duplicate urls found (first few):\n"
-        + "\n".join(f"  {u} at rows {rs}" for u, rs in dupes[:5])
+        f"{len(dupes)} duplicate (url, beds_baths) pairs found (first few):\n"
+        + "\n".join(f"  {u!r} at rows {rs}" for u, rs in dupes[:5])
     )
 
 
@@ -210,6 +210,30 @@ def test_scraped_at_is_valid_when_present(rows):
     )
 
 
+def test_zip_code_is_5_digits(rows):
+    bad = _fails(rows, lambda r: bool(ZIP_CODE_RE.match((r.get("zip_code") or "").strip())))
+    assert not bad, (
+        f"{len(bad)} rows have a malformed 'zip_code' (expected 5 digits):\n"
+        + _fmt_bad(bad, "zip_code")
+    )
+
+
+def test_pricing_clean_format(rows):
+    bad = _fails(rows, lambda r: bool(CLEAN_PRICE_RE.match((r.get("pricing") or "").strip())))
+    assert not bad, (
+        f"{len(bad)} rows have 'pricing' not in clean '$X,XXX+?' format:\n"
+        + _fmt_bad(bad, "pricing")
+    )
+
+
+def test_beds_baths_is_unit_type_label(rows):
+    bad = _fails(rows, lambda r: bool(UNIT_TYPE_RE.match((r.get("beds_baths") or "").strip())))
+    assert not bad, (
+        f"{len(bad)} rows have 'beds_baths' that is not a unit type label (e.g. 'Studio', '1 Bed', '2 Beds+'):\n"
+        + _fmt_bad(bad, "beds_baths")
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tests that the current scrape is known to violate.
 #
@@ -221,7 +245,7 @@ def test_scraped_at_is_valid_when_present(rows):
 
 @pytest.mark.xfail(
     strict=False,
-    reason="Fallback cards (individual listings) currently have no address/amenities",
+    reason="Addresses filled from title via fill_address_from_title() may not have ', CA 9XXXX' suffix",
 )
 def test_address_non_empty_and_has_zip(rows):
     bad = _fails(
@@ -231,18 +255,6 @@ def test_address_non_empty_and_has_zip(rows):
     assert not bad, (
         f"{len(bad)} rows have empty/malformed 'address' (missing ', CA 9XXXX' suffix):\n"
         + _fmt_bad(bad, "address")
-    )
-
-
-@pytest.mark.xfail(
-    strict=False,
-    reason="Fallback cards have no amenities block on the listing page",
-)
-def test_amenities_non_empty(rows):
-    bad = _fails(rows, lambda r: (r.get("amenities") or "").strip() != "")
-    assert not bad, (
-        f"{len(bad)} rows have empty 'amenities':\n"
-        + _fmt_bad(bad, "amenities")
     )
 
 
