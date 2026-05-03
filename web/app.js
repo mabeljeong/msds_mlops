@@ -10,13 +10,102 @@ const API_BASE = (() => {
   return ""; // same-origin
 })();
 
-const COMPONENT_KEYS = ["price_fairness", "safety", "walk", "transit", "affordability"];
+// Number of ranked listings shown in "Top picks". The server filters with the
+// full set of matches; we cap the visible cards/markers to this many.
+const TOP_N = 15;
+
+// Fallback ordering used until /health responds (or if it omits the field for
+// any reason). The server is the source of truth — see pollHealth() below.
+let COMPONENT_KEYS = ["safety", "walk", "transit"];
 const COMPONENT_LABELS = {
-  price_fairness: "Fair",
-  affordability: "Afford",
   safety: "Safety",
   walk: "Walk",
   transit: "Transit",
+};
+
+// SF neighborhoods → 5-digit ZIPs covering each area. Listings only carry
+// `zip_code`, so we filter by the union of ZIPs for the selected neighborhoods.
+// A ZIP can appear under multiple neighborhoods (e.g. SoMa shares 94103 with
+// Mission); the union dedupes naturally via Set.
+const SF_NEIGHBORHOODS = {
+  "Bayview / Hunters Point": ["94124"],
+  "Bernal Heights": ["94110"],
+  "Castro / Noe Valley": ["94114", "94131"],
+  "Chinatown": ["94108", "94133"],
+  "Excelsior / Outer Mission": ["94112"],
+  "Financial District / Embarcadero": ["94104", "94105", "94111"],
+  "Glen Park / Diamond Heights": ["94131"],
+  "Haight-Ashbury": ["94117"],
+  "Hayes Valley / Civic Center": ["94102"],
+  "Lake Merced / Parkmerced": ["94132"],
+  "Marina / Cow Hollow": ["94123"],
+  "Mission": ["94110", "94103"],
+  "Nob Hill / Russian Hill": ["94109"],
+  "North Beach / Telegraph Hill": ["94133"],
+  "Pacific Heights / Western Addition": ["94115"],
+  "Portola / Visitacion Valley": ["94134"],
+  "Potrero Hill / Dogpatch": ["94107"],
+  "Presidio / Sea Cliff": ["94129"],
+  "Inner Richmond": ["94118"],
+  "Outer Richmond": ["94121"],
+  "Inner Sunset": ["94122"],
+  "Outer Sunset / Parkside": ["94116"],
+  "SoMa / Mission Bay": ["94103", "94107", "94158"],
+  "Tenderloin": ["94102"],
+  "Treasure Island": ["94130"],
+  "Twin Peaks / West Portal": ["94127"],
+};
+
+/** ZIP -> sorted unique neighborhood names. Built once from SF_NEIGHBORHOODS. */
+const ZIP_TO_NEIGHBORHOODS = (() => {
+  const out = new Map();
+  for (const [name, zips] of Object.entries(SF_NEIGHBORHOODS)) {
+    for (const zip of zips) {
+      const key = String(zip);
+      if (!out.has(key)) out.set(key, new Set());
+      out.get(key).add(name);
+    }
+  }
+  return new Map(
+    Array.from(out.entries()).map(([zip, names]) => [
+      zip,
+      Array.from(names).sort((a, b) => a.localeCompare(b)),
+    ]),
+  );
+})();
+
+function neighborhoodLabelForZip(zip) {
+  if (zip == null) return "";
+  const names = ZIP_TO_NEIGHBORHOODS.get(String(zip));
+  return names && names.length ? names.join(" · ") : "";
+}
+
+/**
+ * Bed/bath pill scales. Each entry has:
+ *   value: stable id for the pill (also used in dataset)
+ *   label: visible text
+ *   n:     numeric edge — exact integer for beds, lower bound for baths
+ *   unbounded: true when this pill represents "and up" (no upper cap when used as range max)
+ */
+const BED_PILLS = [
+  { value: "0", label: "Studio", n: 0, unbounded: false },
+  { value: "1", label: "1", n: 1, unbounded: false },
+  { value: "2", label: "2", n: 2, unbounded: false },
+  { value: "3", label: "3", n: 3, unbounded: false },
+  { value: "4+", label: "4+", n: 4, unbounded: true },
+];
+
+const BATH_PILLS = [
+  { value: "1", label: "1+", n: 1, unbounded: false },
+  { value: "1.5", label: "1.5+", n: 1.5, unbounded: false },
+  { value: "2", label: "2+", n: 2, unbounded: false },
+  { value: "3+", label: "3+", n: 3, unbounded: true },
+];
+
+/** Active pill values per group. Order does not matter — we sort by scale index. */
+const filterState = {
+  beds: new Set(["2"]),
+  baths: new Set(),
 };
 
 /** Live state */
@@ -30,6 +119,8 @@ const state = {
 // ----- Boot --------------------------------------------------------------- //
 document.addEventListener("DOMContentLoaded", async () => {
   initSliders();
+  initRoomPills();
+  initNeighborhoods();
   initMap();
   await pollHealth();
   await loadListings();
@@ -37,8 +128,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   document.getElementById("rankBtn").addEventListener("click", rerank);
   document.getElementById("budget").addEventListener("change", rerank);
-  document.getElementById("beds").addEventListener("change", rerank);
-  document.getElementById("zipFilter").addEventListener("change", rerank);
+  document.getElementById("neighborhoodFilter").addEventListener("change", rerank);
 });
 
 // ----- API health --------------------------------------------------------- //
@@ -48,6 +138,9 @@ async function pollHealth() {
     const res = await fetch(`${API_BASE}/health`);
     if (!res.ok) throw new Error(res.status);
     const data = await res.json();
+    if (Array.isArray(data.rank_component_keys) && data.rank_component_keys.length > 0) {
+      COMPONENT_KEYS = data.rank_component_keys;
+    }
     el.textContent = `model: ${data.model_source}${data.model_loaded ? " · loaded" : ""}`;
     el.classList.add("ok");
   } catch (err) {
@@ -82,15 +175,92 @@ function readWeights() {
   return w;
 }
 
+/**
+ * Sort the active pill values for a group by their position on the scale,
+ * returning the matching pill spec objects (lowest first).
+ */
+function sortedActivePills(scale, active) {
+  const byValue = new Map(scale.map((p, i) => [p.value, { spec: p, idx: i }]));
+  return Array.from(active)
+    .map((v) => byValue.get(v))
+    .filter(Boolean)
+    .sort((a, b) => a.idx - b.idx)
+    .map(({ spec }) => spec);
+}
+
+/**
+ * Apartment-style pill matcher:
+ *   0 active → no constraint
+ *   1 active → "exact bucket" for that pill (bedrooms: integer match or ≥ for "+";
+ *              bathrooms: ≥ pill threshold)
+ *   2 active → inclusive range [low.n, high.n]; if the high pill is unbounded
+ *              (e.g. 4+ beds, 3+ baths), the upper cap is removed.
+ *
+ * Beds use floor() so 1.0/1.5 both count as "1". Baths use the raw number so
+ * 1.5+ behaves correctly.
+ *
+ * `singleMinThreshold`: when true (bathrooms), a single active pill means
+ * listing >= threshold ("1+", "2+", …), not exact equality.
+ */
+function matchesPillSelection(scale, active, raw, { floorValue, singleMinThreshold = false }) {
+  if (!active || active.size === 0) return true;
+  if (raw == null || raw === "" || Number.isNaN(Number(raw))) return false;
+  const n = floorValue ? Math.floor(Number(raw)) : Number(raw);
+  const pills = sortedActivePills(scale, active);
+  if (pills.length === 0) return true;
+  if (pills.length === 1) {
+    const p = pills[0];
+    if (singleMinThreshold) return n >= p.n;
+    return p.unbounded ? n >= p.n : n === p.n;
+  }
+  const [lo, hi] = [pills[0], pills[pills.length - 1]];
+  if (n < lo.n) return false;
+  if (hi.unbounded) return true;
+  return n <= hi.n;
+}
+
+function matchesBedPillSelection(raw) {
+  return matchesPillSelection(BED_PILLS, filterState.beds, raw, { floorValue: true });
+}
+
+/**
+ * Bath filters use minimum semantics (1+ means >= 1). Demo listings often omit
+ * `bathrooms`; treat missing as 1.0 so 1+ still surfaces results (stricter
+ * tiers like 1.5+ correctly require known counts or imputed 1 failing 1.5+).
+ */
+function matchesBathPillSelection(raw) {
+  let effective = raw;
+  if (raw == null || raw === "" || Number.isNaN(Number(raw))) {
+    effective = 1;
+  }
+  return matchesPillSelection(BATH_PILLS, filterState.baths, effective, {
+    floorValue: false,
+    singleMinThreshold: true,
+  });
+}
+
+function selectedNeighborhoodZips() {
+  const select = document.getElementById("neighborhoodFilter");
+  const zips = new Set();
+  for (const opt of select.selectedOptions) {
+    for (const zip of SF_NEIGHBORHOODS[opt.value] || []) zips.add(zip);
+  }
+  return zips;
+}
+
 function applyFilters(listings) {
-  const beds = document.getElementById("beds").value;
-  const zip = document.getElementById("zipFilter").value.trim();
+  const budgetRaw = document.getElementById("budget").value;
+  const budget = budgetRaw ? Number(budgetRaw) : null;
+  const zipAllow = selectedNeighborhoodZips();
+
   return listings.filter((l) => {
-    if (beds !== "" && Math.floor(Number(l.bedrooms || 0)) !== Number(beds)) {
-      // Special case: bedrooms field can be 0 for studio
-      if (!(beds === "3" && Number(l.bedrooms || 0) >= 3)) return false;
+    if (!matchesBedPillSelection(l.bedrooms)) return false;
+    if (filterState.baths.size > 0 && !matchesBathPillSelection(l.bathrooms)) return false;
+    if (budget != null && budget > 0) {
+      const rent = Number(l.actual_rent_usd ?? l.rent_usd);
+      if (!Number.isFinite(rent) || rent > budget) return false;
     }
-    if (zip && String(l.zip_code) !== zip) return false;
+    if (zipAllow.size > 0 && !zipAllow.has(String(l.zip_code))) return false;
     return true;
   });
 }
@@ -113,11 +283,10 @@ async function rerank() {
   }
 
   const weights = readWeights();
-  const budgetVal = document.getElementById("budget").value;
   const body = {
     listings: filtered,
     weights,
-    budget_usd: budgetVal ? Number(budgetVal) : null,
+    top_n: TOP_N,
   };
 
   status.textContent = "ranking…";
@@ -133,7 +302,10 @@ async function rerank() {
     }
     const data = await res.json();
     state.ranked = data.results || [];
-    status.textContent = `Ranked ${data.n_returned}/${data.n_input}`;
+    status.textContent =
+      data.n_returned < data.n_input
+        ? `Top ${data.n_returned} of ${data.n_input} matches`
+        : `Ranked ${data.n_returned} matches`;
 
     const w = data.weights_normalized || {};
     const wStr = COMPONENT_KEYS.map((k) => `${COMPONENT_LABELS[k]} ${(w[k] * 100).toFixed(0)}%`).join(" · ");
@@ -159,6 +331,86 @@ function initSliders() {
       debouncedRerank();
     });
   });
+}
+
+// ----- Bed/bath pills ----------------------------------------------------- //
+function initRoomPills() {
+  const debouncedRerank = debounce(rerank, 100);
+
+  const groups = [
+    { id: "bedsPills", scale: BED_PILLS, key: "beds" },
+    { id: "bathsPills", scale: BATH_PILLS, key: "baths" },
+  ];
+
+  for (const { id, scale, key } of groups) {
+    const container = document.getElementById(id);
+    if (!container) continue;
+    container.innerHTML = "";
+    for (const spec of scale) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "pill";
+      btn.textContent = spec.label;
+      btn.dataset.value = spec.value;
+      btn.setAttribute("aria-pressed", filterState[key].has(spec.value) ? "true" : "false");
+      btn.addEventListener("click", () => {
+        togglePill(key, spec.value);
+        renderPillGroup(key);
+        debouncedRerank();
+      });
+      container.appendChild(btn);
+    }
+  }
+
+  document.querySelectorAll(".pill-clear").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.dataset.clear;
+      if (!key) return;
+      filterState[key].clear();
+      renderPillGroup(key);
+      debouncedRerank();
+    });
+  });
+}
+
+/**
+ * Apartment-style toggle: clicking a pill flips its active state. We cap each
+ * group at two active pills (drop the oldest when a third is added) so the user
+ * always sees a clean exact-or-range selection.
+ */
+function togglePill(key, value) {
+  const set = filterState[key];
+  if (set.has(value)) {
+    set.delete(value);
+    return;
+  }
+  if (set.size >= 2) {
+    const oldest = set.values().next().value;
+    set.delete(oldest);
+  }
+  set.add(value);
+}
+
+function renderPillGroup(key) {
+  const containerId = key === "beds" ? "bedsPills" : "bathsPills";
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const set = filterState[key];
+  for (const btn of container.querySelectorAll(".pill")) {
+    btn.setAttribute("aria-pressed", set.has(btn.dataset.value) ? "true" : "false");
+  }
+}
+
+function initNeighborhoods() {
+  const select = document.getElementById("neighborhoodFilter");
+  if (!select) return;
+  const names = Object.keys(SF_NEIGHBORHOODS).sort((a, b) => a.localeCompare(b));
+  for (const name of names) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    select.appendChild(opt);
+  }
 }
 
 function debounce(fn, wait) {
@@ -227,11 +479,16 @@ function renderMap(items) {
 
 function popupHtml(it) {
   const fmt = (v) => (v == null ? "—" : `$${Math.round(v).toLocaleString()}`);
+  const neighborhood = neighborhoodLabelForZip(it.zip_code);
+  const neighborhoodLine = neighborhood
+    ? `<div style="color:#475569; font-size: 11px;">${escapeHtml(neighborhood)}</div>`
+    : "";
   return `
     <div style="font-family: inherit; min-width: 180px;">
       <div style="font-weight:600;">#${it.rank} · ${it.zip_code}</div>
+      ${neighborhoodLine}
       <div style="color:#475569; font-size: 12px;">${it.bedrooms || 0} bed · ${fmt(it.actual_rent_usd)}</div>
-      <div style="margin-top:4px;">Fair band: ${fmt(it.fair_rent_p10)} – ${fmt(it.fair_rent_p90)}</div>
+      <div style="margin-top:4px;">Fair band: ${fmt(it.fair_rent_p25)} – ${fmt(it.fair_rent_p75)}</div>
       <div>Score: <strong>${(it.composite_score * 100).toFixed(0)}</strong>/100</div>
     </div>`;
 }
@@ -258,15 +515,21 @@ function buildCard(it) {
   const subtitle = it.address || `ZIP ${it.zip_code}`;
 
   const bandLabel =
-    it.fair_rent_p10 != null && it.fair_rent_p90 != null
-      ? `$${Math.round(it.fair_rent_p10).toLocaleString()} – $${Math.round(it.fair_rent_p90).toLocaleString()}`
+    it.fair_rent_p25 != null && it.fair_rent_p75 != null
+      ? `$${Math.round(it.fair_rent_p25).toLocaleString()} – $${Math.round(it.fair_rent_p75).toLocaleString()}`
       : `~$${Math.round(it.predicted_rent_usd * 0.9).toLocaleString()} – $${Math.round(it.predicted_rent_usd * 1.1).toLocaleString()} (est.)`;
+
+  const neighborhood = neighborhoodLabelForZip(it.zip_code);
+  const neighborhoodHtml = neighborhood
+    ? `<p class="neighborhood" title="${escapeHtml(neighborhood)}">${escapeHtml(neighborhood)}</p>`
+    : "";
 
   card.innerHTML = `
     <div class="card-head">
       <div class="title-block">
         <p class="title" title="${escapeHtml(title)}">${escapeHtml(title)}</p>
         <p class="subtitle" title="${escapeHtml(subtitle)}">${escapeHtml(subtitle)}</p>
+        ${neighborhoodHtml}
       </div>
       <div class="rank">#${it.rank}</div>
     </div>
@@ -294,7 +557,7 @@ function buildCard(it) {
       <span>$${Math.round(it.predicted_rent_usd).toLocaleString()}/mo</span>
     </div>
     <div class="kv-row">
-      <span class="label">Fair band p10–p90</span>
+      <span class="label">Fair band p25–p75</span>
       <span>${bandLabel}</span>
     </div>
 
@@ -321,21 +584,14 @@ function buildCard(it) {
 }
 
 /**
- * Decide a price-status verdict (`fair` / `over` / `under`) for the actual rent
- * relative to the fair-rent band returned by /rank. We prefer the calibrated p10/p90
- * band; if it's unavailable (e.g. placeholder model) we fall back to predicted ±10%.
- * `flag_overpriced` from the backend is the source of truth and overrides the visual
- * verdict when set.
- */
-/**
  * Per-listing price verdict. Pure function of this listing's `actual_rent_usd`
  * vs its own fair-rent band. Nothing is hard-coded across listings.
  *
- *   actual > p90  →  "over"   (right of band)
- *   actual < p10  →  "under"  (left of band)
+ *   actual > p75  →  "over"   (right of band)
+ *   actual < p25  →  "under"  (left of band)
  *   otherwise     →  "fair"   (inside band)
  *
- * If the backend returned a calibrated band (real MLflow model), p10/p90 are used
+ * If the backend returned a calibrated band (real MLflow model), p25/p75 are used
  * directly and the label is "Overpriced" / "Fair" / "Under fair". If only the
  * placeholder is loaded (no band), we synthesize predicted ± 10% and append "(est.)"
  * to the label so the user knows the comparison is uncalibrated — but the verdict
@@ -344,41 +600,41 @@ function buildCard(it) {
 function priceStatus(it) {
   const actual = Number(it.actual_rent_usd) || 0;
   const predicted = Number(it.predicted_rent_usd) || 0;
-  const hasBand = it.fair_rent_p10 != null && it.fair_rent_p90 != null;
-  const p10 = hasBand ? it.fair_rent_p10 : predicted * 0.9;
-  const p90 = hasBand ? it.fair_rent_p90 : predicted * 1.1;
+  const hasBand = it.fair_rent_p25 != null && it.fair_rent_p75 != null;
+  const p25 = hasBand ? it.fair_rent_p25 : predicted * 0.9;
+  const p75 = hasBand ? it.fair_rent_p75 : predicted * 1.1;
 
   let kind = "fair";
-  if (it.flag_overpriced || actual > p90) kind = "over";
-  else if (actual < p10) kind = "under";
+  if (it.flag_overpriced || actual > p75) kind = "over";
+  else if (actual < p25) kind = "under";
 
   const baseLabel = kind === "over" ? "Overpriced" : kind === "under" ? "Under fair" : "Fair";
   const label = hasBand ? baseLabel : `${baseLabel} (est.)`;
   const tooltip = hasBand
-    ? `Actual $${Math.round(actual)} vs fair band $${Math.round(p10)}–$${Math.round(p90)}`
-    : `Actual $${Math.round(actual)} vs estimated band $${Math.round(p10)}–$${Math.round(p90)} (placeholder model — set MLFLOW_MODEL_URI for a calibrated band).`;
+    ? `Actual $${Math.round(actual)} vs fair band $${Math.round(p25)}–$${Math.round(p75)}`
+    : `Actual $${Math.round(actual)} vs estimated band $${Math.round(p25)}–$${Math.round(p75)} (placeholder model — set MLFLOW_MODEL_URI for a calibrated band).`;
 
-  return { kind, label, tooltip, p10, p90, hasBand };
+  return { kind, label, tooltip, p25, p75, hasBand };
 }
 
 function rentBarHtml(it, status) {
   const actual = Number(it.actual_rent_usd) || 0;
   const predicted = Number(it.predicted_rent_usd) || 0;
-  const { p10, p90, hasBand } = status;
+  const { p25, p75, hasBand } = status;
 
   // Bar spans both the band and the actual rent, with padding, so the marker is
   // always inside the visible bar regardless of whether the listing is over/under.
-  const lo = Math.min(actual, p10) * 0.9;
-  const hi = Math.max(actual, p90) * 1.1;
+  const lo = Math.min(actual, p25) * 0.9;
+  const hi = Math.max(actual, p75) * 1.1;
 
   const clamp = (n) => Math.max(2, Math.min(98, n));
   const pct = (v) => `${clamp(((v - lo) / (hi - lo)) * 100)}%`;
 
-  const bandWidthPct = clamp(((p90 - p10) / (hi - lo)) * 100);
+  const bandWidthPct = clamp(((p75 - p25) / (hi - lo)) * 100);
   const bandClass = hasBand ? "rent-band" : "rent-band synthetic";
   const bandTitle = hasBand
-    ? `Fair band p10–p90: $${Math.round(p10)}–$${Math.round(p90)}`
-    : `Estimated band (predicted ±10%): $${Math.round(p10)}–$${Math.round(p90)}`;
+    ? `Fair band p25–p75: $${Math.round(p25)}–$${Math.round(p75)}`
+    : `Estimated band (predicted ±10%): $${Math.round(p25)}–$${Math.round(p75)}`;
 
   const predictedLine = hasBand
     ? `<div class="rent-line" style="left:${pct(predicted)}" title="Predicted: $${Math.round(predicted)}"></div>`
@@ -391,11 +647,11 @@ function rentBarHtml(it, status) {
       hasBand ? "" : " (placeholder)"
     }">
       <div class="rent-axis"></div>
-      <div class="${bandClass}" style="left:${pct(p10)}; width:${bandWidthPct}%" title="${escapeHtml(bandTitle)}"></div>
+      <div class="${bandClass}" style="left:${pct(p25)}; width:${bandWidthPct}%" title="${escapeHtml(bandTitle)}"></div>
       ${predictedLine}
       <div class="${markerCls}" style="left:${pct(actual)}"></div>
-      <div class="rent-tick" style="left:${pct(p10)}">$${(p10 / 1000).toFixed(1)}k</div>
-      <div class="rent-tick" style="left:${pct(p90)}">$${(p90 / 1000).toFixed(1)}k</div>
+      <div class="rent-tick" style="left:${pct(p25)}">$${(p25 / 1000).toFixed(1)}k</div>
+      <div class="rent-tick" style="left:${pct(p75)}">$${(p75 / 1000).toFixed(1)}k</div>
       <div class="rent-tick actual-tick" style="left:${pct(actual)}; bottom: 32px;">
         $${Math.round(actual).toLocaleString()}
       </div>

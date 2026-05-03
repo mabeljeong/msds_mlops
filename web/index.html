@@ -11,7 +11,7 @@
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
       crossorigin=""
     />
-    <link rel="stylesheet" href="/web/styles.css?v=6" />
+    <link rel="stylesheet" href="/web/styles.css?v=8" />
   </head>
   <body>
     <header class="topbar">
@@ -29,25 +29,17 @@
           <h2>Your priorities</h2>
           <p class="muted">Drag to weight what matters. Scores auto-normalize.</p>
 
-          <div class="slider-row" data-key="price_fairness">
-            <label>Price fairness <span class="value">50</span></label>
-            <input type="range" min="0" max="100" value="50" />
-          </div>
-          <div class="slider-row" data-key="affordability">
-            <label>Affordability <span class="value">50</span></label>
+          <div class="slider-row" data-key="walk">
+            <label>Walkability <span class="value">50</span></label>
             <input type="range" min="0" max="100" value="50" />
           </div>
           <div class="slider-row" data-key="safety">
-            <label>Safety <span class="value">30</span></label>
-            <input type="range" min="0" max="100" value="30" />
-          </div>
-          <div class="slider-row" data-key="walk">
-            <label>Walkability <span class="value">30</span></label>
-            <input type="range" min="0" max="100" value="30" />
+            <label>Safety <span class="value">50</span></label>
+            <input type="range" min="0" max="100" value="50" />
           </div>
           <div class="slider-row" data-key="transit">
-            <label>Transit <span class="value">30</span></label>
-            <input type="range" min="0" max="100" value="30" />
+            <label>Transit <span class="value">50</span></label>
+            <input type="range" min="0" max="100" value="50" />
           </div>
         </section>
 
@@ -57,20 +49,42 @@
             Budget (USD/mo)
             <input id="budget" type="number" min="500" step="100" placeholder="e.g. 3500" value="4000" />
           </label>
-          <label class="filter-row">
-            Bedrooms
-            <select id="beds">
-              <option value="">Any</option>
-              <option value="0">Studio</option>
-              <option value="1">1</option>
-              <option value="2" selected>2</option>
-              <option value="3">3+</option>
-            </select>
+          <div class="filter-row pill-row">
+            <div class="pill-row-head">
+              <span class="pill-label">Bedrooms</span>
+              <button type="button" class="pill-clear" data-clear="beds" aria-label="Clear bedroom filter">Any</button>
+            </div>
+            <div
+              class="pill-group"
+              id="bedsPills"
+              role="group"
+              aria-label="Bedrooms"
+              data-group="beds"
+            ></div>
+            <p class="muted pill-hint">Tap one for exact, or two for a range.</p>
+          </div>
+
+          <div class="filter-row pill-row">
+            <div class="pill-row-head">
+              <span class="pill-label">Bathrooms</span>
+              <button type="button" class="pill-clear" data-clear="baths" aria-label="Clear bathroom filter">Any</button>
+            </div>
+            <div
+              class="pill-group"
+              id="bathsPills"
+              role="group"
+              aria-label="Bathrooms"
+              data-group="baths"
+            ></div>
+            <p class="muted pill-hint">Each pill is a minimum; pick two to bound a range.</p>
+          </div>
+          <label class="filter-row neighborhood-row">
+            Neighborhoods
+            <select id="neighborhoodFilter" multiple size="6"></select>
           </label>
-          <label class="filter-row">
-            ZIP
-            <input id="zipFilter" type="text" inputmode="numeric" maxlength="5" placeholder="any 5-digit" />
-          </label>
+          <p class="muted neighborhood-hint">
+            ⌘/Ctrl-click to pick multiple. Empty = all of SF.
+          </p>
 
           <button id="rankBtn" class="primary">Rank listings</button>
           <div class="muted" id="rankStatus"></div>
@@ -79,7 +93,7 @@
         <section class="card legend">
           <h2>How a card reads</h2>
           <p class="muted">
-            The bar shows the model's <strong>p10–p90 fair-rent band</strong>. The
+            The bar shows the model's <strong>p25–p75 fair-rent band</strong>. The
             <span class="dot dot-actual"></span> is the actual asking rent. Inside the band
             is fair; right of the band means we flag it as <em>overpriced</em>.
           </p>
@@ -102,6 +116,6 @@
       integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
       crossorigin=""
     ></script>
-    <script src="/web/app.js?v=6"></script>
+    <script src="/web/app.js?v=9"></script>
   </body>
 </html>

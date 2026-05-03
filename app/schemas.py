@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from pydantic import BaseModel, Field
 
@@ -41,16 +41,16 @@ class FlagOverpricedRequest(PredictRequest):
 
 class PredictResponse(BaseModel):
     predicted_rent_usd: float = Field(..., description="Predicted monthly rent in USD")
-    fair_rent_p10: Optional[float] = Field(None, description="10th percentile rent prediction (USD)")
-    fair_rent_p90: Optional[float] = Field(None, description="90th percentile rent prediction (USD)")
+    fair_rent_p25: Optional[float] = Field(None, description="25th percentile rent prediction (USD)")
+    fair_rent_p75: Optional[float] = Field(None, description="75th percentile rent prediction (USD)")
     model_source: str = Field(..., description="'mlflow' or 'placeholder'")
     model_version: Optional[str] = Field(None, description="MLflow model version if applicable")
 
 
 class FlagOverpricedResponse(BaseModel):
     predicted_rent_usd: float
-    fair_rent_p10: Optional[float] = None
-    fair_rent_p90: Optional[float] = None
+    fair_rent_p25: Optional[float] = None
+    fair_rent_p75: Optional[float] = None
     delta_usd: Optional[float] = None
     delta_pct: Optional[float] = None
     flag_overpriced: bool
@@ -63,16 +63,18 @@ class HealthResponse(BaseModel):
     model_loaded: bool
     model_source: str
     detail: Optional[str] = None
+    rank_component_keys: list[str] = Field(
+        default_factory=list,
+        description="Server-canonical ordering of /rank component scores. Clients use this to render component labels.",
+    )
 
 
 class UserWeights(BaseModel):
     """User preferences for the /rank composite score (any non-negative scale, auto-normalized)."""
 
-    price_fairness: float = Field(1.0, ge=0, le=100)
     safety: float = Field(1.0, ge=0, le=100)
     walk: float = Field(1.0, ge=0, le=100)
     transit: float = Field(1.0, ge=0, le=100)
-    affordability: float = Field(1.0, ge=0, le=100)
 
 
 class RankRequestListing(FlagOverpricedRequest):
@@ -87,12 +89,9 @@ class RankRequestListing(FlagOverpricedRequest):
 
 
 class RankRequest(BaseModel):
-    listings: list[RankRequestListing] = Field(..., min_length=1, max_length=200)
+    listings: list[RankRequestListing] = Field(..., min_length=1, max_length=1000)
     weights: UserWeights = Field(default_factory=UserWeights)
-    budget_usd: Optional[float] = Field(
-        None, gt=0, le=100_000, description="Optional renter budget; drives the affordability score"
-    )
-    top_n: Optional[int] = Field(None, ge=1, le=200)
+    top_n: Optional[int] = Field(None, ge=1, le=1000)
 
 
 class RankedListing(BaseModel):
@@ -108,18 +107,51 @@ class RankedListing(BaseModel):
 
     actual_rent_usd: float
     predicted_rent_usd: float
-    fair_rent_p10: Optional[float] = None
-    fair_rent_p90: Optional[float] = None
+    fair_rent_p25: Optional[float] = None
+    fair_rent_p75: Optional[float] = None
     delta_usd: Optional[float] = None
     delta_pct: Optional[float] = None
     flag_overpriced: bool
     flag_reason: Optional[str] = None
 
     component_scores: dict[str, float] = Field(
-        ..., description="price_fairness, safety, walk, transit, affordability — all in [0, 1]"
+        ..., description="safety, walk, transit — all in [0, 1]"
     )
     composite_score: float = Field(..., description="Weighted sum of component_scores, in [0, 1]")
     rank: int
+
+    @classmethod
+    def from_rank_inputs(
+        cls,
+        src: Mapping[str, Any],
+        flag: Mapping[str, Any],
+        component_scores: Mapping[str, float],
+        composite_score: float,
+        rank: int,
+    ) -> "RankedListing":
+        """Assemble a RankedListing from a source listing and its flag-overpriced result."""
+        return cls(
+            listing_id=src.get("listing_id"),
+            title=src.get("title"),
+            address=src.get("address"),
+            url=src.get("url"),
+            zip_code=str(src.get("zip_code", "")).zfill(5),
+            bedrooms=float(src.get("bedrooms", 0.0)),
+            bathrooms=src.get("bathrooms"),
+            lat=src.get("lat"),
+            lng=src.get("lng"),
+            actual_rent_usd=float(src.get("actual_rent_usd", 0.0)),
+            predicted_rent_usd=float(flag.get("predicted_rent_usd", 0.0)),
+            fair_rent_p25=flag.get("fair_rent_p25"),
+            fair_rent_p75=flag.get("fair_rent_p75"),
+            delta_usd=flag.get("delta_usd"),
+            delta_pct=flag.get("delta_pct"),
+            flag_overpriced=bool(flag.get("flag_overpriced", False)),
+            flag_reason=flag.get("flag_reason"),
+            component_scores={k: round(float(v), 4) for k, v in component_scores.items()},
+            composite_score=round(float(composite_score), 4),
+            rank=rank,
+        )
 
 
 class RankResponse(BaseModel):

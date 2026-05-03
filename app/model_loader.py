@@ -12,9 +12,86 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
 
+from app.listing_fields import actual_rent_usd_from_listing
 from app.rent_predictor import FEATURE_COLUMNS
 
 logger = logging.getLogger(__name__)
+
+
+def _opt_float(rec: dict, key: str) -> float | None:
+    """Return ``float(rec[key])`` if present and non-NaN, else ``None``."""
+    if key in rec and pd.notna(rec[key]):
+        return float(rec[key])
+    return None
+
+
+def _parse_pyfunc_prediction(raw: Any) -> dict[str, Any]:
+    """Normalize an MLflow pyfunc ``predict`` output into a predict-shaped dict."""
+    if isinstance(raw, pd.DataFrame):
+        rec = raw.iloc[0].to_dict()
+        return {
+            "predicted_rent_usd": float(rec.get("predicted_rent_usd", float("nan"))),
+            "fair_rent_p25": _opt_float(rec, "fair_rent_p25"),
+            "fair_rent_p75": _opt_float(rec, "fair_rent_p75"),
+        }
+    arr = np.asarray(raw).ravel()
+    return {"predicted_rent_usd": float(arr[0]), "fair_rent_p25": None, "fair_rent_p75": None}
+
+
+def _parse_pyfunc_flag(raw: Any) -> dict[str, Any] | None:
+    """Normalize an MLflow pyfunc flag-overpriced output (DataFrame) into a flag dict."""
+    if not (isinstance(raw, pd.DataFrame) and not raw.empty):
+        return None
+    rec = raw.iloc[0].to_dict()
+    return {
+        "predicted_rent_usd": float(rec.get("predicted_rent_usd", float("nan"))),
+        "fair_rent_p25": _opt_float(rec, "fair_rent_p25"),
+        "fair_rent_p75": _opt_float(rec, "fair_rent_p75"),
+        "delta_usd": _opt_float(rec, "delta_usd"),
+        "delta_pct": _opt_float(rec, "delta_pct"),
+        "flag_overpriced": bool(rec.get("flag_overpriced", False)),
+        "flag_reason": rec.get("flag_reason"),
+        "top_shap_contributors": rec.get("top_shap_contributors") or [],
+    }
+
+
+def _placeholder_predict(row: pd.DataFrame) -> dict[str, Any]:
+    """Transparent zori-anchored heuristic for the offline placeholder model.
+
+    We deliberately do *not* call the LinearRegression instance fitted in
+    ``_build_placeholder`` because it was trained on synthetic data and produces
+    extreme values on real SF listings. This formula keeps the SPA demo
+    plausible end-to-end without the registered model.
+    """
+    feats = row.iloc[0].to_dict()
+
+    def _f(key: str, default: float) -> float:
+        v = feats.get(key)
+        try:
+            if v is None or pd.isna(v):
+                return default
+            return float(v)
+        except (TypeError, ValueError):
+            return default
+
+    bedrooms = max(0.0, min(_f("bedrooms", 1.0), 5.0))
+    bathrooms = max(1.0, min(_f("bathrooms", 1.0), 4.0))
+    walk_score = max(0.0, min(_f("walk_score", 80.0), 100.0))
+    transit_score = max(0.0, min(_f("transit_score", 80.0), 100.0))
+    zori = _f("zori_baseline", 3500.0)
+    if zori <= 0:
+        zori = 3500.0
+
+    size_mult = {0: 0.70, 1: 0.90, 2: 1.10, 3: 1.35, 4: 1.55, 5: 1.70}.get(int(bedrooms), 1.0)
+    amenity_mult = 1.0 + 0.0015 * (walk_score - 70) + 0.0010 * (transit_score - 70)
+    bath_bonus = 200.0 * max(0.0, bathrooms - 1.0)
+
+    predicted = float(np.clip(zori * size_mult * amenity_mult + bath_bonus, 1500.0, 12000.0))
+    return {
+        "predicted_rent_usd": predicted,
+        "fair_rent_p25": None,
+        "fair_rent_p75": None,
+    }
 
 
 @dataclass
@@ -38,98 +115,30 @@ class LoadedModel:
                 out[col] = pd.to_numeric(out[col], errors="coerce").astype(float)
         return out
 
-    def predict_row(self, features: dict[str, Any]) -> dict[str, Any]:
+    def _feature_row(self, features: dict[str, Any]) -> pd.DataFrame:
         row = pd.DataFrame([{c: features.get(c) for c in FEATURE_COLUMNS}])
-        row = self._coerce_input(row)
+        return self._coerce_input(row)
+
+    def predict_row(self, features: dict[str, Any]) -> dict[str, Any]:
+        row = self._feature_row(features)
         if self.pyfunc_model is not None:
-            raw = self.pyfunc_model.predict(row)
-            if isinstance(raw, pd.DataFrame):
-                rec = raw.iloc[0].to_dict()
-                return {
-                    "predicted_rent_usd": float(rec.get("predicted_rent_usd", float("nan"))),
-                    "fair_rent_p10": (
-                        float(rec["fair_rent_p10"]) if "fair_rent_p10" in rec and pd.notna(rec["fair_rent_p10"]) else None
-                    ),
-                    "fair_rent_p90": (
-                        float(rec["fair_rent_p90"]) if "fair_rent_p90" in rec and pd.notna(rec["fair_rent_p90"]) else None
-                    ),
-                }
-            arr = np.asarray(raw).ravel()
-            return {"predicted_rent_usd": float(arr[0]), "fair_rent_p10": None, "fair_rent_p90": None}
-
-        # Placeholder predictor — used only when MLFLOW_MODEL_URI isn't set.
-        #
-        # We *don't* use the LinearRegression instance fitted in `_build_placeholder`
-        # because it was trained on synthetic data and produces garbage on real SF
-        # listings (extreme negative or saturated values). Instead we use a small
-        # transparent formula anchored on `zori_baseline` (the ZIP-level Zillow rent
-        # index, which is a real SF benchmark) and scaled by the unit size and a
-        # few amenity adjustments. This still varies per listing in a plausible way
-        # so the SPA can be demoed end-to-end without the real model.
-        feats = row.iloc[0].to_dict()
-
-        def _f(key: str, default: float) -> float:
-            v = feats.get(key)
-            try:
-                if v is None or pd.isna(v):
-                    return default
-                return float(v)
-            except (TypeError, ValueError):
-                return default
-
-        bedrooms = max(0.0, min(_f("bedrooms", 1.0), 5.0))
-        bathrooms = max(1.0, min(_f("bathrooms", 1.0), 4.0))
-        walk_score = max(0.0, min(_f("walk_score", 80.0), 100.0))
-        transit_score = max(0.0, min(_f("transit_score", 80.0), 100.0))
-        zori = _f("zori_baseline", 3500.0)
-        if zori <= 0:
-            zori = 3500.0
-
-        size_mult = {0: 0.70, 1: 0.90, 2: 1.10, 3: 1.35, 4: 1.55, 5: 1.70}.get(int(bedrooms), 1.0)
-        amenity_mult = 1.0 + 0.0015 * (walk_score - 70) + 0.0010 * (transit_score - 70)
-        bath_bonus = 200.0 * max(0.0, bathrooms - 1.0)
-
-        predicted = float(np.clip(zori * size_mult * amenity_mult + bath_bonus, 1500.0, 12000.0))
-        return {
-            "predicted_rent_usd": predicted,
-            "fair_rent_p10": None,
-            "fair_rent_p90": None,
-        }
+            return _parse_pyfunc_prediction(self.pyfunc_model.predict(row))
+        return _placeholder_predict(row)
 
     def flag_overpriced(self, listing: dict[str, Any]) -> dict[str, Any]:
+        actual = actual_rent_usd_from_listing(listing)
+
         if self.pyfunc_model is not None:
-            row = pd.DataFrame([{c: listing.get(c) for c in FEATURE_COLUMNS}])
-            row = self._coerce_input(row)
-            if "actual_rent_usd" in listing:
-                row["actual_rent_usd"] = float(listing["actual_rent_usd"])
-            elif "rent_usd" in listing:
-                row["actual_rent_usd"] = float(listing["rent_usd"])
-            out = self.pyfunc_model.predict(row)
-            if isinstance(out, pd.DataFrame) and not out.empty:
-                rec = out.iloc[0].to_dict()
-                return {
-                    "predicted_rent_usd": float(rec.get("predicted_rent_usd", float("nan"))),
-                    "fair_rent_p10": (
-                        float(rec["fair_rent_p10"]) if "fair_rent_p10" in rec and pd.notna(rec["fair_rent_p10"]) else None
-                    ),
-                    "fair_rent_p90": (
-                        float(rec["fair_rent_p90"]) if "fair_rent_p90" in rec and pd.notna(rec["fair_rent_p90"]) else None
-                    ),
-                    "delta_usd": (
-                        float(rec["delta_usd"]) if "delta_usd" in rec and pd.notna(rec["delta_usd"]) else None
-                    ),
-                    "delta_pct": (
-                        float(rec["delta_pct"]) if "delta_pct" in rec and pd.notna(rec["delta_pct"]) else None
-                    ),
-                    "flag_overpriced": bool(rec.get("flag_overpriced", False)),
-                    "flag_reason": rec.get("flag_reason"),
-                    "top_shap_contributors": rec.get("top_shap_contributors") or [],
-                }
+            row = self._feature_row(listing)
+            if actual is not None:
+                row["actual_rent_usd"] = actual
+            parsed = _parse_pyfunc_flag(self.pyfunc_model.predict(row))
+            if parsed is not None:
+                return parsed
 
         prediction = self.predict_row(listing)
         predicted = float(prediction["predicted_rent_usd"])
-        actual = listing.get("actual_rent_usd", listing.get("rent_usd"))
-        delta_usd = (float(actual) - predicted) if actual is not None else None
+        delta_usd = (actual - predicted) if actual is not None else None
         delta_pct = (delta_usd / predicted) if (delta_usd is not None and predicted > 0) else None
 
         # IMPORTANT: the placeholder regressor is trained on synthetic data and is not
@@ -140,8 +149,8 @@ class LoadedModel:
         # price-fairness scoring.
         return {
             "predicted_rent_usd": round(predicted, 2),
-            "fair_rent_p10": prediction.get("fair_rent_p10"),
-            "fair_rent_p90": prediction.get("fair_rent_p90"),
+            "fair_rent_p25": prediction.get("fair_rent_p25"),
+            "fair_rent_p75": prediction.get("fair_rent_p75"),
             "delta_usd": round(delta_usd, 2) if delta_usd is not None else None,
             "delta_pct": round(delta_pct, 4) if delta_pct is not None else None,
             "flag_overpriced": False,

@@ -6,7 +6,7 @@ This script runs a small experiment suite under one MLflow parent run:
   - 5 hand-picked XGBoost hyperparameter configs
   - 1 ZORI-only baseline per variant
 Then it picks the best (variant, hp) by CV MAE, retrains a tri-model bundle
-(point + q10 + q90), and registers the final artifact for the API.
+(point + q25 + q75), and registers the final artifact for the API.
 """
 
 from __future__ import annotations
@@ -351,40 +351,40 @@ def _coverage_from_cv(
     for fold_idx, (train_idx, valid_idx) in enumerate(cv.split(X), start=1):
         X_tr, X_val = X.iloc[train_idx], X.iloc[valid_idx]
         y_tr, y_val = y_log.iloc[train_idx], y_log.iloc[valid_idx]
-        q10 = build_training_pipeline(
+        q25 = build_training_pipeline(
             random_state=RANDOM_STATE + fold_idx,
             n_estimators=hp.n_estimators,
             max_depth=hp.max_depth,
             min_child_weight=hp.min_child_weight,
             objective="reg:quantileerror",
-            quantile_alpha=0.1,
+            quantile_alpha=0.25,
         )
-        q90 = build_training_pipeline(
+        q75 = build_training_pipeline(
             random_state=RANDOM_STATE + fold_idx,
             n_estimators=hp.n_estimators,
             max_depth=hp.max_depth,
             min_child_weight=hp.min_child_weight,
             objective="reg:quantileerror",
-            quantile_alpha=0.9,
+            quantile_alpha=0.75,
         )
-        q10.fit(X_tr, y_tr)
-        q90.fit(X_tr, y_tr)
-        pred_lo = np.expm1(q10.predict(X_val))
-        pred_hi = np.expm1(q90.predict(X_val))
+        q25.fit(X_tr, y_tr)
+        q75.fit(X_tr, y_tr)
+        pred_lo = np.expm1(q25.predict(X_val))
+        pred_hi = np.expm1(q75.predict(X_val))
         truth = np.expm1(y_val)
         inside = ((truth >= pred_lo) & (truth <= pred_hi)).mean()
         width = float(np.mean(np.maximum(pred_hi - pred_lo, 0.0)))
         coverage_per_fold.append(
             {
                 "fold": float(fold_idx),
-                "coverage_p10_p90": float(inside),
+                "coverage_p25_p75": float(inside),
                 "mean_interval_width_usd": width,
             }
         )
     arr = pd.DataFrame(coverage_per_fold)
     summary = {
-        "interval_coverage_mean": float(arr["coverage_p10_p90"].mean()),
-        "interval_coverage_std": float(arr["coverage_p10_p90"].std(ddof=0)),
+        "interval_coverage_mean": float(arr["coverage_p25_p75"].mean()),
+        "interval_coverage_std": float(arr["coverage_p25_p75"].std(ddof=0)),
         "interval_width_mean_usd": float(arr["mean_interval_width_usd"].mean()),
     }
     return summary, coverage_per_fold
@@ -487,32 +487,32 @@ def main() -> None:
                 min_child_weight=best_hp.min_child_weight,
             )
             point_pipe.fit(X_best, y_best)
-            q10_pipe = build_training_pipeline(
+            q25_pipe = build_training_pipeline(
                 random_state=RANDOM_STATE,
                 n_estimators=best_hp.n_estimators,
                 max_depth=best_hp.max_depth,
                 min_child_weight=best_hp.min_child_weight,
                 objective="reg:quantileerror",
-                quantile_alpha=0.1,
+                quantile_alpha=0.25,
             )
-            q10_pipe.fit(X_best, y_best)
-            q90_pipe = build_training_pipeline(
+            q25_pipe.fit(X_best, y_best)
+            q75_pipe = build_training_pipeline(
                 random_state=RANDOM_STATE,
                 n_estimators=best_hp.n_estimators,
                 max_depth=best_hp.max_depth,
                 min_child_weight=best_hp.min_child_weight,
                 objective="reg:quantileerror",
-                quantile_alpha=0.9,
+                quantile_alpha=0.75,
             )
-            q90_pipe.fit(X_best, y_best)
+            q75_pipe.fit(X_best, y_best)
 
             coverage_summary, coverage_per_fold = _coverage_from_cv(X_best, y_best, best_hp)
 
             predictor = RentPredictor(
                 model=point_pipe,
                 feature_columns=FEATURE_COLUMNS,
-                q10_model=q10_pipe,
-                q90_model=q90_pipe,
+                q25_model=q25_pipe,
+                q75_model=q75_pipe,
                 metadata={
                     "variant": best.variant,
                     "hp_config": best.hp_name,
@@ -595,7 +595,7 @@ def main() -> None:
     if mae_lift_vs_zori is not None:
         print(f"MAE lift vs ZORI baseline: {mae_lift_vs_zori * 100:.2f}%")
     print(
-        "Interval coverage P(actual ∈ [p10,p90]): "
+        "Interval coverage P(actual ∈ [p25,p75]): "
         f"{coverage_summary['interval_coverage_mean'] * 100:.1f}% "
         f"(width≈${coverage_summary['interval_width_mean_usd']:.0f})"
     )

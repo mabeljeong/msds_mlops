@@ -79,28 +79,96 @@ def _zip_meta(zip_code: str) -> tuple[float | None, float | None]:
     return None, None
 
 
-def _lookup_clean_listing(zip_code: str, bedrooms: float | None) -> dict[str, str]:
-    """Best-effort title/address/url from scraped listings, matched on zip+beds."""
+def _parse_price(raw: Any) -> float | None:
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return None
+    m = PRICE_RE.search(str(raw))
+    if not m:
+        return None
+    try:
+        return float(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _load_scraped() -> pd.DataFrame:
+    """Pre-process the scraped listings table once for repeated lookups."""
     if not CLEAN_LISTINGS_CSV.exists():
-        return {}
+        return pd.DataFrame(columns=["zip_code", "beds_baths", "title", "address", "url", "_price"])
     df = pd.read_csv(CLEAN_LISTINGS_CSV)
     df["zip_code"] = df["zip_code"].astype(str).str.zfill(5)
-    target_zip = str(zip_code).zfill(5)
+    df["_price"] = df["pricing"].map(_parse_price)
+    return df
 
-    candidates = df.loc[df["zip_code"] == target_zip]
-    if bedrooms is not None and not pd.isna(bedrooms):
-        bed_label = "Studio" if float(bedrooms) == 0 else f"{int(bedrooms)} Bed"
-        bed_match = candidates[candidates["beds_baths"].fillna("").str.startswith(bed_label)]
-        if not bed_match.empty:
-            candidates = bed_match
-    if candidates.empty:
-        return {}
-    row = candidates.iloc[0]
-    return {
-        "title": str(row.get("title", "")).strip() or None,
-        "address": str(row.get("address", "")).strip() or None,
-        "url": str(row.get("url", "")).strip() or None,
-    }
+
+class _ScrapedMatcher:
+    """Claim-once matcher: each scraped row is handed out at most once.
+
+    Match priority:
+      1) zip + beds + closest unclaimed price within $200
+      2) zip + beds + closest unclaimed price (any delta)
+      3) zip + closest unclaimed price (any delta)
+      4) no match -> empty dict
+    """
+
+    def __init__(self, df: pd.DataFrame) -> None:
+        self.df = df
+        self.claimed: set[int] = set()
+
+    @staticmethod
+    def _bed_label(bedrooms: float | None) -> str | None:
+        if bedrooms is None or pd.isna(bedrooms):
+            return None
+        return "Studio" if float(bedrooms) == 0 else f"{int(float(bedrooms))} Bed"
+
+    def lookup(self, zip_code: str, bedrooms: float | None, actual_rent: float) -> dict[str, str | None]:
+        if self.df.empty:
+            return {}
+        target_zip = str(zip_code).zfill(5)
+        bed_prefix = self._bed_label(bedrooms)
+
+        zip_pool = self.df.loc[
+            (self.df["zip_code"] == target_zip) & (~self.df.index.isin(self.claimed))
+        ]
+        if zip_pool.empty:
+            return {}
+
+        bed_pool = zip_pool
+        if bed_prefix is not None:
+            beds_match = zip_pool[zip_pool["beds_baths"].fillna("").str.startswith(bed_prefix)]
+            if not beds_match.empty:
+                bed_pool = beds_match
+
+        idx = self._closest(bed_pool, actual_rent, tolerance=200.0)
+        if idx is None:
+            idx = self._closest(bed_pool, actual_rent, tolerance=None)
+        if idx is None and bed_pool is not zip_pool:
+            idx = self._closest(zip_pool, actual_rent, tolerance=None)
+        if idx is None:
+            return {}
+
+        self.claimed.add(idx)
+        row = self.df.loc[idx]
+        return {
+            "title": (str(row.get("title", "")).strip() or None),
+            "address": (str(row.get("address", "")).strip() or None),
+            "url": (str(row.get("url", "")).strip() or None),
+        }
+
+    @staticmethod
+    def _closest(pool: pd.DataFrame, target: float, tolerance: float | None) -> int | None:
+        if pool.empty:
+            return None
+        priced = pool.dropna(subset=["_price"])
+        if not priced.empty:
+            deltas = (priced["_price"] - target).abs()
+            best = deltas.idxmin()
+            if tolerance is None or deltas.loc[best] <= tolerance:
+                return int(best)
+            return None
+        if tolerance is None:
+            return int(pool.index[0])
+        return None
 
 
 def main() -> None:
@@ -108,6 +176,7 @@ def main() -> None:
         raise SystemExit(f"missing {SCORED_CSV} — run scripts/build_demo_examples.py first")
 
     df = pd.read_csv(SCORED_CSV)
+    matcher = _ScrapedMatcher(_load_scraped())
     out: list[dict[str, Any]] = []
     for i, row in df.iterrows():
         payload = _parse_payload(row.get("request_payload"))
@@ -119,7 +188,7 @@ def main() -> None:
         actual = float(payload.get("actual_rent_usd", row.get("actual_rent_usd", 0.0)))
 
         lat, lng = _zip_meta(zip_code)
-        meta = _lookup_clean_listing(zip_code, bedrooms)
+        meta = matcher.lookup(zip_code, bedrooms, actual)
 
         record = {
             "listing_id": f"L{i:03d}",

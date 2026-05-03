@@ -82,8 +82,8 @@ def build_training_pipeline(
 class RentPredictor:
     model: Pipeline
     feature_columns: list[str]
-    q10_model: Pipeline | None = None
-    q90_model: Pipeline | None = None
+    q25_model: Pipeline | None = None
+    q75_model: Pipeline | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def _frame(self, data: pd.DataFrame | Mapping[str, Any]) -> pd.DataFrame:
@@ -116,10 +116,10 @@ class RentPredictor:
     ) -> dict[str, np.ndarray]:
         X = self._frame(data)
         out: dict[str, np.ndarray] = {"point": self._expm1_clip(self.model.predict(X))}
-        if self.q10_model is not None:
-            out["p10"] = self._expm1_clip(self.q10_model.predict(X))
-        if self.q90_model is not None:
-            out["p90"] = self._expm1_clip(self.q90_model.predict(X))
+        if self.q25_model is not None:
+            out["p25"] = self._expm1_clip(self.q25_model.predict(X))
+        if self.q75_model is not None:
+            out["p75"] = self._expm1_clip(self.q75_model.predict(X))
         return out
 
     def top_shap_contributors(self, listing: Mapping[str, Any], top_k: int = 5) -> list[dict[str, float | str]]:
@@ -145,17 +145,17 @@ class RentPredictor:
     ) -> dict[str, Any]:
         intervals = self.predict_interval(listing)
         predicted = float(intervals["point"][0])
-        p10 = float(intervals["p10"][0]) if "p10" in intervals else None
-        p90 = float(intervals["p90"][0]) if "p90" in intervals else None
+        p25 = float(intervals["p25"][0]) if "p25" in intervals else None
+        p75 = float(intervals["p75"][0]) if "p75" in intervals else None
 
         actual = listing.get("actual_rent_usd", listing.get("rent_usd"))
         actual_val = float(actual) if actual is not None else np.nan
         delta_usd = actual_val - predicted if np.isfinite(actual_val) else np.nan
         delta_pct = (delta_usd / predicted) if predicted > 0 and np.isfinite(delta_usd) else np.nan
 
-        if p90 is not None and np.isfinite(actual_val):
-            is_flagged = bool(actual_val > p90)
-            flag_reason = "actual_rent_above_p90"
+        if p75 is not None and np.isfinite(actual_val):
+            is_flagged = bool(actual_val > p75)
+            flag_reason = "actual_rent_above_p75"
         else:
             is_flagged = bool(
                 np.isfinite(delta_usd)
@@ -167,8 +167,8 @@ class RentPredictor:
 
         return {
             "predicted_rent_usd": round(predicted, 2),
-            "fair_rent_p10": round(p10, 2) if p10 is not None else None,
-            "fair_rent_p90": round(p90, 2) if p90 is not None else None,
+            "fair_rent_p25": round(p25, 2) if p25 is not None else None,
+            "fair_rent_p75": round(p75, 2) if p75 is not None else None,
             "delta_usd": round(float(delta_usd), 2) if np.isfinite(delta_usd) else None,
             "delta_pct": round(float(delta_pct), 4) if np.isfinite(delta_pct) else None,
             "flag_overpriced": is_flagged,
@@ -190,8 +190,8 @@ class RentPredictorPyfunc(mlflow.pyfunc.PythonModel):
             return pd.DataFrame(records)
         intervals = self.predictor.predict_interval(frame)
         out = pd.DataFrame({"predicted_rent_usd": intervals["point"]})
-        if "p10" in intervals:
-            out["fair_rent_p10"] = intervals["p10"]
-        if "p90" in intervals:
-            out["fair_rent_p90"] = intervals["p90"]
+        if "p25" in intervals:
+            out["fair_rent_p25"] = intervals["p25"]
+        if "p75" in intervals:
+            out["fair_rent_p75"] = intervals["p75"]
         return out

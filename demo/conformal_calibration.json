@@ -1,6 +1,6 @@
 {
   "method": "Conformalized Quantile Regression (Romano et al. 2019), symmetric dollar offset",
-  "nominal_coverage": 0.8,
+  "nominal_coverage": 0.5,
   "holdout_fraction": 0.15,
   "random_state": 13,
   "n_fit": 510,
@@ -12,14 +12,14 @@
     "learning_rate": 0.05
   },
   "raw": {
-    "coverage": 0.7555555555555555,
-    "mean_width_usd": 2206.62939453125
+    "coverage": 0.4111111111111111,
+    "mean_width_usd": 1103.8035888671875
   },
   "calibrated": {
-    "offset_usd": 102.4130859375,
-    "coverage": 0.8111111111111111,
-    "mean_width_usd": 2411.45556640625
+    "offset_usd": 86.32080078125,
+    "coverage": 0.5111111111111111,
+    "mean_width_usd": 1276.4451904296875
   },
   "point_mae_usd": 691.1458875868055,
-  "usage_note": "Apply at serve-time as p10' = max(p10 - offset_usd, 0), p90' = p90 + offset_usd. Offsets should be re-estimated whenever the underlying model is retrained."
+  "usage_note": "Apply at serve-time as p25' = max(p25 - offset_usd, 0), p75' = p75 + offset_usd. Offsets should be re-estimated whenever the underlying model is retrained."
 }
