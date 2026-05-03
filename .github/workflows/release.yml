@@ -1,0 +1,125 @@
+name: Release (tag-triggered)
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write  # required for Workload Identity Federation
+
+env:
+  IMAGE_NAME: rentiq-api
+  CLOUD_RUN_SERVICE: rentiq-api
+
+jobs:
+  build-and-push:
+    name: Build and push to Artifact Registry
+    runs-on: ubuntu-22.04
+    outputs:
+      image_uri: ${{ steps.set-image.outputs.image_uri }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Configure docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Compute image URIs
+        id: set-image
+        run: |
+          BASE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_AR_REPO }}/${IMAGE_NAME}"
+          echo "image_uri=${BASE}:${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "BASE=${BASE}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.BASE }}:${{ github.ref_name }}
+            ${{ env.BASE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-cloud-run:
+    name: Deploy to Cloud Run
+    runs-on: ubuntu-22.04
+    needs: build-and-push
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Deploy revision to Cloud Run
+        run: |
+          gcloud run deploy "${CLOUD_RUN_SERVICE}" \
+            --image="${{ needs.build-and-push.outputs.image_uri }}" \
+            --region="${{ secrets.GCP_REGION }}" \
+            --platform=managed \
+            --port=8000 \
+            --allow-unauthenticated \
+            --set-env-vars="MLFLOW_TRACKING_URI=${{ secrets.MLFLOW_TRACKING_URI }},MLFLOW_MODEL_URI=${{ secrets.MLFLOW_MODEL_URI }},MLFLOW_MODEL_VERSION=${{ secrets.MLFLOW_MODEL_VERSION }}" \
+            --quiet
+
+      - name: Show service URL
+        run: |
+          gcloud run services describe "${CLOUD_RUN_SERVICE}" \
+            --region="${{ secrets.GCP_REGION }}" \
+            --format="value(status.url)"
+
+  data-refresh:
+    name: Refresh data on GCS
+    runs-on: ubuntu-22.04
+    needs: build-and-push
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Upload scraped data to GCS
+        run: |
+          python scripts/upload_to_gcs.py \
+            --bucket "${{ secrets.GCS_DATA_BUCKET }}" \
+            --subdir scraped \
+            --prefix "rentiq/${GITHUB_REF_NAME}/data/"
