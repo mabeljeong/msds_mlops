@@ -308,8 +308,11 @@ async function rerank() {
         : `Ranked ${data.n_returned} matches`;
 
     const w = data.weights_normalized || {};
-    const wStr = COMPONENT_KEYS.map((k) => `${COMPONENT_LABELS[k]} ${(w[k] * 100).toFixed(0)}%`).join(" · ");
-    document.getElementById("resultsMeta").textContent = wStr;
+    const meta = document.getElementById("resultsMeta");
+    meta.innerHTML = COMPONENT_KEYS.map(
+      (k) =>
+        `<span class="weight-chip">${escapeHtml(COMPONENT_LABELS[k])} ${(w[k] * 100).toFixed(0)}%</span>`,
+    ).join("");
 
     renderCards(state.ranked);
     renderMap(state.ranked);
@@ -424,20 +427,13 @@ function debounce(fn, wait) {
 // ----- Map ---------------------------------------------------------------- //
 function initMap() {
   const map = L.map("map", { zoomControl: true }).setView([37.7749, -122.4194], 12);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
     maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    subdomains: "abcd",
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · &copy; <a href="https://carto.com/attributions">CARTO</a>',
   }).addTo(map);
   state.map = map;
-}
-
-function colorForScore(score) {
-  // 0 → red, 0.5 → yellow, 1 → green
-  const s = Math.max(0, Math.min(1, score));
-  const r = s < 0.5 ? 239 : Math.round(239 + (34 - 239) * ((s - 0.5) / 0.5));
-  const g = s < 0.5 ? Math.round(68 + (204 - 68) * (s / 0.5)) : Math.round(204 + (197 - 204) * ((s - 0.5) / 0.5));
-  const b = s < 0.5 ? Math.round(68 + (21 - 68) * (s / 0.5)) : Math.round(21 + (94 - 21) * ((s - 0.5) / 0.5));
-  return `rgb(${r}, ${g}, ${b})`;
 }
 
 function renderMap(items) {
@@ -450,13 +446,13 @@ function renderMap(items) {
   const bounds = [];
   items.forEach((it) => {
     if (it.lat == null || it.lng == null) return;
-    const color = colorForScore(it.composite_score);
-    const html = `<div class="score-marker" style="background:${color}">${it.rank}</div>`;
+    const status = priceStatus(it);
+    const html = `<div class="score-marker pin-${status.kind}">${it.rank}</div>`;
     const icon = L.divIcon({
       html,
       className: "",
-      iconSize: [24, 24],
-      iconAnchor: [12, 12],
+      iconSize: [28, 28],
+      iconAnchor: [14, 14],
     });
     const marker = L.marker([it.lat, it.lng], { icon }).addTo(map);
     marker.bindPopup(popupHtml(it));
@@ -481,15 +477,15 @@ function popupHtml(it) {
   const fmt = (v) => (v == null ? "—" : `$${Math.round(v).toLocaleString()}`);
   const neighborhood = neighborhoodLabelForZip(it.zip_code);
   const neighborhoodLine = neighborhood
-    ? `<div style="color:#475569; font-size: 11px;">${escapeHtml(neighborhood)}</div>`
+    ? `<div class="popup-sub">${escapeHtml(neighborhood)}</div>`
     : "";
   return `
-    <div style="font-family: inherit; min-width: 180px;">
-      <div style="font-weight:600;">#${it.rank} · ${it.zip_code}</div>
+    <div style="min-width: 180px;">
+      <div class="popup-title">#${it.rank} · ${it.zip_code}</div>
       ${neighborhoodLine}
-      <div style="color:#475569; font-size: 12px;">${it.bedrooms || 0} bed · ${fmt(it.actual_rent_usd)}</div>
-      <div style="margin-top:4px;">Fair band: ${fmt(it.fair_rent_p25)} – ${fmt(it.fair_rent_p75)}</div>
-      <div>Score: <strong>${(it.composite_score * 100).toFixed(0)}</strong>/100</div>
+      <div class="popup-meta">${it.bedrooms || 0} bed · ${fmt(it.actual_rent_usd)}</div>
+      <div class="popup-meta" style="margin-top:4px;">Fair band: ${fmt(it.fair_rent_p25)} – ${fmt(it.fair_rent_p75)}</div>
+      <div class="popup-meta">Score: <strong>${(it.composite_score * 100).toFixed(0)}</strong>/100</div>
     </div>`;
 }
 
@@ -527,22 +523,20 @@ function buildCard(it) {
   card.innerHTML = `
     <div class="card-head">
       <div class="title-block">
+        ${neighborhoodHtml}
         <p class="title" title="${escapeHtml(title)}">${escapeHtml(title)}</p>
         <p class="subtitle" title="${escapeHtml(subtitle)}">${escapeHtml(subtitle)}</p>
-        ${neighborhoodHtml}
       </div>
       <div class="rank">#${it.rank}</div>
     </div>
 
-    <div class="kv-row">
-      <span class="label">Composite</span>
-      <span class="score-badge" style="background: ${badgeBg(it.composite_score)}">
-        <span class="num">${(it.composite_score * 100).toFixed(0)}</span>/100
-      </span>
-    </div>
-
-    <div class="kv-row">
-      <span class="label">Price status</span>
+    <div class="composite-row">
+      <div class="composite-block">
+        <span class="score-label">Composite score</span>
+        <span class="score-badge">
+          <span class="num">${(it.composite_score * 100).toFixed(0)}</span><span class="denom">/100</span>
+        </span>
+      </div>
       <span class="price-pill ${status.kind}" title="${escapeHtml(status.tooltip)}">${status.label}</span>
     </div>
 
@@ -668,13 +662,6 @@ function componentHtml(key, score) {
       <span class="pct">${(pct * 100).toFixed(0)}</span>
     </div>
   `;
-}
-
-function badgeBg(score) {
-  const s = Math.max(0, Math.min(1, score));
-  // light fill matching colorForScore
-  const c = colorForScore(s);
-  return c.replace("rgb", "rgba").replace(")", ", 0.18)");
 }
 
 function escapeHtml(s) {
