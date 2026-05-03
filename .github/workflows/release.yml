@@ -76,14 +76,13 @@ jobs:
       - name: Deploy revision to Cloud Run
         run: |
           gcloud run deploy "${{ env.CLOUD_RUN_SERVICE }}" \
-            --image="${{ needs.build-and-push.outputs.image_uri }}" \
+            --image="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_AR_REPO }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}" \
             --region="${{ secrets.GCP_REGION }}" \
             --platform=managed \
             --port=8000 \
             --allow-unauthenticated \
             --set-env-vars="MLFLOW_TRACKING_URI=${{ secrets.MLFLOW_TRACKING_URI }},MLFLOW_MODEL_URI=${{ secrets.MLFLOW_MODEL_URI }},MLFLOW_MODEL_VERSION=${{ secrets.MLFLOW_MODEL_VERSION }}" \
             --quiet
-
       - name: Show service URL
         run: |
           gcloud run services describe "${{ env.CLOUD_RUN_SERVICE }}" \
