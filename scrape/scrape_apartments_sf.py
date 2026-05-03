@@ -27,13 +27,13 @@ import json
 import random
 import re
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote, urljoin
 
+from playwright._impl._errors import TargetClosedError
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import sync_playwright
-from playwright._impl._errors import TargetClosedError
 from playwright_stealth import Stealth
 
 BASE = "https://www.apartments.com/san-francisco-ca/"
@@ -136,7 +136,7 @@ def extract_cards(page):
                 "address": address,
                 "amenities": amenities,
                 "url": href,
-                "scraped_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "scraped_at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
             }
         )
     return rows

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 
@@ -11,7 +10,7 @@ from .constants import CENSUS_SENTINEL
 from .utils import _strip_money, _strip_pct, parse_date, standardize_zip
 
 
-def clean_census(path: Path | str) -> Optional[pd.DataFrame]:
+def clean_census(path: Path | str) -> pd.DataFrame | None:
     """Census ZIP-level static features: standardize zip_code; drop ZIP 94104."""
     path = Path(path)
     if not path.is_file():
@@ -41,7 +40,7 @@ def clean_census(path: Path | str) -> Optional[pd.DataFrame]:
     return df
 
 
-def clean_redfin(path: Path | str) -> Optional[pd.DataFrame]:
+def clean_redfin(path: Path | str) -> pd.DataFrame | None:
     """Redfin metro-level TSV: utf-16, tab. No zip_code. Cleans $ / % numerics; parses dates."""
     path = Path(path)
     if not path.is_file():

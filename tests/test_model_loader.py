@@ -13,7 +13,6 @@ import pandas as pd
 from app import model_loader
 from app.model_loader import LoadedModel, _placeholder_predict, load_model
 
-
 # ---------------------------------------------------------------------------
 # _placeholder_predict — pure heuristic
 # ---------------------------------------------------------------------------

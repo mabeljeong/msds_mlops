@@ -26,7 +26,6 @@ import argparse
 import os
 import time
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 import requests
@@ -74,7 +73,7 @@ def fetch_page(
     offset: int,
     page_size: int,
     *,
-    app_token: Optional[str] = None,
+    app_token: str | None = None,
     timeout: float = 120.0,
     max_retries: int = 3,
 ) -> list[dict]:
@@ -84,7 +83,7 @@ def fetch_page(
         headers["X-App-Token"] = app_token
 
     params = _build_params(start_date, offset, page_size)
-    last_exc: Optional[Exception] = None
+    last_exc: Exception | None = None
     for attempt in range(1, max_retries + 1):
         try:
             resp = requests.get(CRIME_ENDPOINT, params=params, headers=headers, timeout=timeout)
@@ -102,8 +101,8 @@ def fetch_all_incidents(
     *,
     start_date: str = DEFAULT_START_DATE,
     page_size: int = DEFAULT_PAGE_SIZE,
-    max_rows: Optional[int] = None,
-    app_token: Optional[str] = None,
+    max_rows: int | None = None,
+    app_token: str | None = None,
     pause_s: float = 0.0,
 ) -> pd.DataFrame:
     """
@@ -146,8 +145,8 @@ def fetch_incidents_to_csv(
     *,
     start_date: str = DEFAULT_START_DATE,
     page_size: int = DEFAULT_PAGE_SIZE,
-    max_rows: Optional[int] = None,
-    app_token: Optional[str] = None,
+    max_rows: int | None = None,
+    app_token: str | None = None,
     pause_s: float = 0.0,
 ) -> int:
     """

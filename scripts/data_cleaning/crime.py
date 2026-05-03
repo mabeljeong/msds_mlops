@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -22,7 +21,7 @@ from .utils import _filter_from_start_date, standardize_zip
 def clean_crime(
     crime_path: Path | str = PATH_CRIME,
     zip_polygons_path: Path | str = PATH_ZIP_POLYGONS,
-) -> Optional[pd.DataFrame]:
+) -> pd.DataFrame | None:
     """
     SFPD incidents → (zip_code, month) feature table.
 
@@ -104,7 +103,7 @@ def clean_crime(
 
 def merge_crime_into_listings(
     listings: pd.DataFrame,
-    crime: Optional[pd.DataFrame],
+    crime: pd.DataFrame | None,
 ) -> pd.DataFrame:
     """
     Left-join ZIP-month crime features onto listings.

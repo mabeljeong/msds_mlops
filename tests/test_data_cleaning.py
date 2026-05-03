@@ -21,11 +21,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import data_cleaning as dc
 import pandas as pd
 import pytest
-
-import data_cleaning as dc
-
 
 # =============================================================================
 # 1. Unit tests (pure helpers; no I/O)

@@ -7,8 +7,8 @@ Usage:
 
 import argparse
 from pathlib import Path
-from google.cloud import storage
 
+from google.cloud import storage
 
 DATA_DIR = Path(__file__).parents[1] / "data"
 

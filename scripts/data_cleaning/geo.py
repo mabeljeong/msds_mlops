@@ -11,7 +11,7 @@ import pandas as pd
 from .utils import standardize_zip
 
 
-def _load_zip_polygons(path: Path | str) -> dict[str, "object"]:
+def _load_zip_polygons(path: Path | str) -> dict[str, object]:
     """
     Load a deck.gl-format SF ZIP polygons JSON into ``{zip_code: shapely.Polygon}``.
 
@@ -48,7 +48,7 @@ def _load_zip_polygons(path: Path | str) -> dict[str, "object"]:
 def _assign_zip_by_point(
     latitude: pd.Series,
     longitude: pd.Series,
-    polygons: dict[str, "object"],
+    polygons: dict[str, object],
 ) -> pd.Series:
     """
     Vectorized point-in-polygon ZIP assignment using shapely's STRtree.

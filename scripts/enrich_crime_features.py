@@ -22,11 +22,9 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd
-
 from data_cleaning import _assign_zip_by_point, standardize_zip
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -270,7 +268,7 @@ def build_category_breakdown(
 
 def merge_features_into_listings(
     listings_path: Path | str = DEFAULT_LISTINGS,
-    features: Optional[pd.DataFrame] = None,
+    features: pd.DataFrame | None = None,
     features_path: Path | str = DEFAULT_FEATURES_OUT,
     output_path: Path | str = DEFAULT_LISTINGS,
 ) -> pd.DataFrame:

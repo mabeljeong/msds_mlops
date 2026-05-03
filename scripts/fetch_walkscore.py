@@ -18,17 +18,16 @@ Or standalone:
                                       --output data/processed/listings_walkscore.csv
 """
 
+import argparse
 import os
 import random
 import re
 import time
-import argparse
-from typing import Optional
+from pathlib import Path
 from urllib.parse import urlparse
 
-import requests
 import pandas as pd
-from pathlib import Path
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -94,7 +93,7 @@ _NULL_SCORES = {col: None for col in SCORE_COLUMNS}
 
 # Module-level cache: identical (address, city) keys are geocoded only once
 # per process. Populated/read by ``geocode_address``.
-_geocode_cache: dict[str, tuple[Optional[float], Optional[float]]] = {}
+_geocode_cache: dict[str, tuple[float | None, float | None]] = {}
 _score_cache: dict[tuple[str, str, float, float], dict] = {}
 
 # Standard WalkScore description buckets (per walkscore.com/methodology).
@@ -142,7 +141,7 @@ def _is_missing(val: object) -> bool:
         return False
 
 
-def describe_score(score: Optional[float], kind: str) -> Optional[str]:
+def describe_score(score: float | None, kind: str) -> str | None:
     """
     Map a numeric score to its standard WalkScore description bucket.
 
@@ -164,7 +163,7 @@ def describe_score(score: Optional[float], kind: str) -> Optional[str]:
     return buckets[-1][1]
 
 
-def _slug_to_street(slug: str) -> Optional[str]:
+def _slug_to_street(slug: str) -> str | None:
     """
     Convert an apartments.com slug like ``14-isis-st-san-francisco-ca-unit-4``
     to a street-address-ish string ``14 isis st``.
@@ -189,7 +188,7 @@ def _slug_to_street(slug: str) -> Optional[str]:
     return " ".join(keep)
 
 
-def _address_from_url(url: str) -> Optional[str]:
+def _address_from_url(url: str) -> str | None:
     """Pull a street-address-ish string out of an apartments.com URL slug."""
     if _is_missing(url) or not str(url).strip():
         return None
@@ -212,7 +211,7 @@ def _address_from_url(url: str) -> Optional[str]:
     return None
 
 
-def _normalize_address_text(address: str) -> Optional[str]:
+def _normalize_address_text(address: str) -> str | None:
     """Strip ``Unit X at`` prefixes and trailing unit fragments."""
     if _is_missing(address):
         return None
@@ -238,7 +237,7 @@ def recover_address(
     url: object = None,
     zip_code: object = None,
     city: str = DEFAULT_CITY,
-) -> tuple[Optional[str], str]:
+) -> tuple[str | None, str]:
     """
     Build the best query address from whatever fields are available.
 
@@ -283,7 +282,7 @@ def geocode_address(
     city: str = DEFAULT_CITY,
     *,
     delay: float = 1.0,
-) -> tuple[Optional[float], Optional[float]]:
+) -> tuple[float | None, float | None]:
     """
     Resolve ``address`` to ``(lat, lon)`` via Nominatim.
 
@@ -312,7 +311,7 @@ def geocode_address(
         resp.raise_for_status()
         data = resp.json()
         if not data:
-            result: tuple[Optional[float], Optional[float]] = (None, None)
+            result: tuple[float | None, float | None] = (None, None)
         else:
             result = (float(data[0]["lat"]), float(data[0]["lon"]))
     except Exception:
@@ -325,7 +324,7 @@ def geocode_address(
 
 
 def geocode_with_fallback(
-    address: Optional[str],
+    address: str | None,
     city: str,
     zip_code: object = None,
     *,
