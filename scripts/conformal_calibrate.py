@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Conformalized Quantile Regression calibration for the q10/q90 heads.
+"""Conformalized Quantile Regression calibration for the q25/q75 heads.
 
-Runs once to estimate per-side offsets that expand the q10/q90 intervals so
-empirical coverage on a held-out slice matches the nominal level (0.80 by
+Runs once to estimate per-side offsets that expand the q25/q75 intervals so
+empirical coverage on a held-out slice matches the nominal level (0.50 by
 default). Does not modify the registered MLflow model; instead writes
 `demo/conformal_calibration.json` with offsets, observed coverage, and a small
 note that V2 deployment can apply these at serve-time.
@@ -33,7 +33,7 @@ FEATURE_PATH = ROOT / "data" / "features" / "listings_features.csv"
 OUTPUT_PATH = ROOT / "demo" / "conformal_calibration.json"
 HOLDOUT_FRACTION = 0.15
 RANDOM_STATE = 13
-NOMINAL_COVERAGE = 0.80
+NOMINAL_COVERAGE = 0.50
 WINNING_HP = dict(max_depth=3, min_child_weight=3, n_estimators=220, learning_rate=0.05)
 
 
@@ -71,24 +71,24 @@ def main() -> None:
     print(f"Fit rows: {len(X_fit)}  Calibration rows: {len(X_cal)}")
 
     point = build_training_pipeline(**WINNING_HP, objective="reg:squarederror")
-    q10 = build_training_pipeline(**WINNING_HP, objective="reg:quantileerror", quantile_alpha=0.1)
-    q90 = build_training_pipeline(**WINNING_HP, objective="reg:quantileerror", quantile_alpha=0.9)
+    q25 = build_training_pipeline(**WINNING_HP, objective="reg:quantileerror", quantile_alpha=0.25)
+    q75 = build_training_pipeline(**WINNING_HP, objective="reg:quantileerror", quantile_alpha=0.75)
 
     point.fit(X_fit, ylog_fit)
-    q10.fit(X_fit, ylog_fit)
-    q90.fit(X_fit, ylog_fit)
+    q25.fit(X_fit, ylog_fit)
+    q75.fit(X_fit, ylog_fit)
 
-    p10_pred = np.maximum(np.expm1(q10.predict(X_cal)), 0.0)
-    p90_pred = np.maximum(np.expm1(q90.predict(X_cal)), 0.0)
+    p25_pred = np.maximum(np.expm1(q25.predict(X_cal)), 0.0)
+    p75_pred = np.maximum(np.expm1(q75.predict(X_cal)), 0.0)
     point_pred = np.maximum(np.expm1(point.predict(X_cal)), 0.0)
 
-    raw_coverage = _coverage(y_cal_raw, p10_pred, p90_pred)
-    raw_width = float(np.mean(p90_pred - p10_pred))
+    raw_coverage = _coverage(y_cal_raw, p25_pred, p75_pred)
+    raw_width = float(np.mean(p75_pred - p25_pred))
 
     # Symmetric CQR nonconformity score on the dollar scale (rent is on a roughly
     # log-symmetric distribution after scoping; dollar-side residuals are easy to
     # interpret in the model card / API).
-    scores = np.maximum(p10_pred - y_cal_raw, y_cal_raw - p90_pred)
+    scores = np.maximum(p25_pred - y_cal_raw, y_cal_raw - p75_pred)
     n_cal = len(scores)
     target_index = int(np.ceil((n_cal + 1) * NOMINAL_COVERAGE)) - 1
     target_index = min(max(target_index, 0), n_cal - 1)
@@ -96,8 +96,8 @@ def main() -> None:
     q_hat = float(sorted_scores[target_index])
     q_hat = max(q_hat, 0.0)
 
-    cal_lo = np.maximum(p10_pred - q_hat, 0.0)
-    cal_hi = p90_pred + q_hat
+    cal_lo = np.maximum(p25_pred - q_hat, 0.0)
+    cal_hi = p75_pred + q_hat
     calibrated_coverage = _coverage(y_cal_raw, cal_lo, cal_hi)
     calibrated_width = float(np.mean(cal_hi - cal_lo))
 
@@ -123,7 +123,7 @@ def main() -> None:
         },
         "point_mae_usd": point_mae,
         "usage_note": (
-            "Apply at serve-time as p10' = max(p10 - offset_usd, 0), p90' = p90 + offset_usd. "
+            "Apply at serve-time as p25' = max(p25 - offset_usd, 0), p75' = p75 + offset_usd. "
             "Offsets should be re-estimated whenever the underlying model is retrained."
         ),
     }
