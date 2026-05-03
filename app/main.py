@@ -166,7 +166,7 @@ async def rank(request: Request, body: RankRequest) -> RankResponse:
     scored = score_listings(raw_listings, flag_results)
     weights = normalize_weights(body.weights.model_dump())
 
-    enriched: list[tuple[float, dict[str, Any], "object"]] = [
+    enriched: list[tuple[float, dict[str, Any], object]] = [
         (composite(sc, weights), sc.flag_result, sc) for sc in scored
     ]
 

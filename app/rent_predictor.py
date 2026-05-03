@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any
 
 import joblib
 import mlflow.pyfunc
@@ -13,8 +14,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
-from xgboost import DMatrix
-from xgboost import XGBRegressor
+from xgboost import DMatrix, XGBRegressor
 
 FEATURE_COLUMNS: list[str] = [
     "zip_code",

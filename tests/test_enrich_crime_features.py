@@ -5,10 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import enrich_crime_features as ecf
 import numpy as np
 import pandas as pd
-
-import enrich_crime_features as ecf
 
 
 def _square_polygon(zip_code: int, lon0: float, lat0: float, *, population: int) -> dict:

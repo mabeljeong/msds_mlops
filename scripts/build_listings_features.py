@@ -12,13 +12,12 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
+import data_cleaning as dc
 import numpy as np
 import pandas as pd
-
-import data_cleaning as dc
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROCESSED_DIR = REPO_ROOT / "data" / "processed"
@@ -423,7 +422,7 @@ def _build_manifest(df: pd.DataFrame) -> dict:
             corr_entries.append({"feature": feature_name, "corr_with_rent_usd": float(value)})
 
     return {
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "generated_at_utc": datetime.now(UTC).isoformat(),
         "row_count": int(len(df)),
         "column_count": int(len(df.columns)),
         "columns": list(df.columns),

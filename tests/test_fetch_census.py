@@ -15,7 +15,6 @@ import pytest
 from scripts import fetch_census
 from scripts.fetch_census import SF_ZIPCODES, VARIABLES, fetch_sf_census
 
-
 HEADER = [
     "NAME",
     "B25064_001E",  # median_rent

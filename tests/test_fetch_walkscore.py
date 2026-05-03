@@ -15,16 +15,16 @@ import requests
 
 from scripts import fetch_walkscore
 from scripts.fetch_walkscore import (
+    _NULL_SCORES,
     SCORE_COLUMNS,
     SF_CITY_CENTROID,
+    WS_STATUS_IN_PROGRESS,
     WS_STATUS_INTERNAL_ERROR,
     WS_STATUS_INVALID_KEY,
     WS_STATUS_INVALID_LATLON,
-    WS_STATUS_IN_PROGRESS,
     WS_STATUS_IP_BLOCKED,
     WS_STATUS_QUOTA_EXCEEDED,
     WalkScoreAPIError,
-    _NULL_SCORES,
     describe_score,
     enrich_walkscore,
     geocode_address,
@@ -34,7 +34,6 @@ from scripts.fetch_walkscore import (
     impute_missing_scores,
     recover_address,
 )
-
 
 SAMPLE_PAYLOAD = {
     "status": 1,

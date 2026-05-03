@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 
@@ -11,7 +10,7 @@ from .constants import SF_ZIP_SET, ZORI_DROP_ZIPS
 from .utils import _filter_from_start_date, _melt_zillow_wide, standardize_zip
 
 
-def clean_zori(path: Path | str) -> Optional[pd.DataFrame]:
+def clean_zori(path: Path | str) -> pd.DataFrame | None:
     """ZORI wide CSV → long with zip_code, date, zori_rent. SF ZIPs only; START_DATE; drops sparse ZIPs."""
     path = Path(path)
     if not path.is_file():
@@ -42,7 +41,7 @@ def clean_zori(path: Path | str) -> Optional[pd.DataFrame]:
     return out
 
 
-def clean_zhvi(path: Path | str) -> Optional[pd.DataFrame]:
+def clean_zhvi(path: Path | str) -> pd.DataFrame | None:
     """ZHVI wide CSV (ISO-8859-1) → long with zip_code, date, zhvi_value. SF ZIP filter pre-melt."""
     path = Path(path)
     if not path.is_file():

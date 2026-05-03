@@ -24,7 +24,7 @@ import json
 import random
 import re
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -210,7 +210,7 @@ def _parse_via_links(soup: BeautifulSoup, now: str) -> list[dict]:
 def parse_listings(html: str) -> list[dict]:
     """Parse one search-results page and return a list of row dicts."""
     soup = BeautifulSoup(html, "lxml")
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     rows = _parse_via_selectors(soup, now)
 

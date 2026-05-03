@@ -17,11 +17,10 @@ in [0, 1] regardless of the absolute weight scale the user provides.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Iterable, Mapping
 
 import numpy as np
-
 
 COMPONENT_KEYS = ("safety", "walk", "transit")
 

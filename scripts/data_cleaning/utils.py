@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 import pandas as pd
 
@@ -97,7 +96,7 @@ def _strip_pct(val: object) -> float | None:
         return None
 
 
-def _extract_sqft_from_text(text: object) -> Optional[float]:
+def _extract_sqft_from_text(text: object) -> float | None:
     """Parse first ``942 sq ft`` / ``1,100 sq ft`` style value from a string; ``None`` if absent."""
     if text is None or (isinstance(text, float) and pd.isna(text)):
         return None

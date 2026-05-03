@@ -1,4 +1,5 @@
-from typing import Any, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -8,24 +9,24 @@ class PredictRequest(BaseModel):
 
     zip_code: str = Field(..., min_length=5, max_length=5, description="5-digit listing ZIP code")
     bedrooms: float = Field(..., ge=0, le=20, description="Number of bedrooms")
-    bathrooms: Optional[float] = Field(None, ge=0, le=20, description="Number of bathrooms")
-    walk_score: Optional[float] = Field(None, ge=0, le=100, description="Walk Score (0-100)")
-    transit_score: Optional[float] = Field(None, ge=0, le=100, description="Transit Score (0-100)")
-    census_median_income: Optional[float] = Field(None, ge=0, description="ZIP-level census median income")
-    census_renter_ratio: Optional[float] = Field(None, ge=0, le=1, description="ZIP-level renter household share")
-    census_vacancy_rate: Optional[float] = Field(None, ge=0, le=1, description="ZIP-level vacancy rate")
-    crime_total_month_zip_log1p_latest: Optional[float] = Field(
+    bathrooms: float | None = Field(None, ge=0, le=20, description="Number of bathrooms")
+    walk_score: float | None = Field(None, ge=0, le=100, description="Walk Score (0-100)")
+    transit_score: float | None = Field(None, ge=0, le=100, description="Transit Score (0-100)")
+    census_median_income: float | None = Field(None, ge=0, description="ZIP-level census median income")
+    census_renter_ratio: float | None = Field(None, ge=0, le=1, description="ZIP-level renter household share")
+    census_vacancy_rate: float | None = Field(None, ge=0, le=1, description="ZIP-level vacancy rate")
+    crime_total_month_zip_log1p_latest: float | None = Field(
         None, ge=0, description="Log1p monthly crime volume (point-in-time)"
     )
-    zori_baseline: Optional[float] = Field(None, ge=0, description="ZIP-level Zillow observed rent index")
-    zhvi_level: Optional[float] = Field(None, ge=0, description="ZIP-level Zillow home value index")
-    zhvi_12mo_delta: Optional[float] = Field(None, description="ZIP-level 12-month home value delta")
-    redfin_mom_pct: Optional[float] = Field(None, description="Metro rent momentum month-over-month")
-    redfin_yoy_pct: Optional[float] = Field(None, description="Metro rent momentum year-over-year")
-    bedrooms_x_census_income: Optional[float] = Field(
+    zori_baseline: float | None = Field(None, ge=0, description="ZIP-level Zillow observed rent index")
+    zhvi_level: float | None = Field(None, ge=0, description="ZIP-level Zillow home value index")
+    zhvi_12mo_delta: float | None = Field(None, description="ZIP-level 12-month home value delta")
+    redfin_mom_pct: float | None = Field(None, description="Metro rent momentum month-over-month")
+    redfin_yoy_pct: float | None = Field(None, description="Metro rent momentum year-over-year")
+    bedrooms_x_census_income: float | None = Field(
         None, description="Optional precomputed bedrooms x census_median_income"
     )
-    walk_score_x_transit_score: Optional[float] = Field(
+    walk_score_x_transit_score: float | None = Field(
         None, description="Optional precomputed walk_score x transit_score"
     )
 
@@ -41,20 +42,20 @@ class FlagOverpricedRequest(PredictRequest):
 
 class PredictResponse(BaseModel):
     predicted_rent_usd: float = Field(..., description="Predicted monthly rent in USD")
-    fair_rent_p25: Optional[float] = Field(None, description="25th percentile rent prediction (USD)")
-    fair_rent_p75: Optional[float] = Field(None, description="75th percentile rent prediction (USD)")
+    fair_rent_p25: float | None = Field(None, description="25th percentile rent prediction (USD)")
+    fair_rent_p75: float | None = Field(None, description="75th percentile rent prediction (USD)")
     model_source: str = Field(..., description="'mlflow' or 'placeholder'")
-    model_version: Optional[str] = Field(None, description="MLflow model version if applicable")
+    model_version: str | None = Field(None, description="MLflow model version if applicable")
 
 
 class FlagOverpricedResponse(BaseModel):
     predicted_rent_usd: float
-    fair_rent_p25: Optional[float] = None
-    fair_rent_p75: Optional[float] = None
-    delta_usd: Optional[float] = None
-    delta_pct: Optional[float] = None
+    fair_rent_p25: float | None = None
+    fair_rent_p75: float | None = None
+    delta_usd: float | None = None
+    delta_pct: float | None = None
     flag_overpriced: bool
-    flag_reason: Optional[str] = None
+    flag_reason: str | None = None
     top_shap_contributors: list[dict[str, Any]]
 
 
@@ -62,7 +63,7 @@ class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
     model_source: str
-    detail: Optional[str] = None
+    detail: str | None = None
     rank_component_keys: list[str] = Field(
         default_factory=list,
         description="Server-canonical ordering of /rank component scores. Clients use this to render component labels.",
@@ -80,39 +81,39 @@ class UserWeights(BaseModel):
 class RankRequestListing(FlagOverpricedRequest):
     """A listing payload for ranking. Adds optional id/title/lat-lng for UI."""
 
-    listing_id: Optional[str] = Field(None, description="Stable id for the listing card")
-    title: Optional[str] = None
-    address: Optional[str] = None
-    url: Optional[str] = None
-    lat: Optional[float] = None
-    lng: Optional[float] = None
+    listing_id: str | None = Field(None, description="Stable id for the listing card")
+    title: str | None = None
+    address: str | None = None
+    url: str | None = None
+    lat: float | None = None
+    lng: float | None = None
 
 
 class RankRequest(BaseModel):
     listings: list[RankRequestListing] = Field(..., min_length=1, max_length=1000)
     weights: UserWeights = Field(default_factory=UserWeights)
-    top_n: Optional[int] = Field(None, ge=1, le=1000)
+    top_n: int | None = Field(None, ge=1, le=1000)
 
 
 class RankedListing(BaseModel):
-    listing_id: Optional[str] = None
-    title: Optional[str] = None
-    address: Optional[str] = None
-    url: Optional[str] = None
+    listing_id: str | None = None
+    title: str | None = None
+    address: str | None = None
+    url: str | None = None
     zip_code: str
     bedrooms: float
-    bathrooms: Optional[float] = None
-    lat: Optional[float] = None
-    lng: Optional[float] = None
+    bathrooms: float | None = None
+    lat: float | None = None
+    lng: float | None = None
 
     actual_rent_usd: float
     predicted_rent_usd: float
-    fair_rent_p25: Optional[float] = None
-    fair_rent_p75: Optional[float] = None
-    delta_usd: Optional[float] = None
-    delta_pct: Optional[float] = None
+    fair_rent_p25: float | None = None
+    fair_rent_p75: float | None = None
+    delta_usd: float | None = None
+    delta_pct: float | None = None
     flag_overpriced: bool
-    flag_reason: Optional[str] = None
+    flag_reason: str | None = None
 
     component_scores: dict[str, float] = Field(
         ..., description="safety, walk, transit — all in [0, 1]"

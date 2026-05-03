@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 
@@ -25,7 +24,7 @@ from .utils import (
 )
 
 
-def clean_listings(path: Path | str) -> Optional[pd.DataFrame]:
+def clean_listings(path: Path | str) -> pd.DataFrame | None:
     """
     Scraped listings: one output row per (address, floorplan, rent).
 
@@ -73,7 +72,7 @@ def clean_listings(path: Path | str) -> Optional[pd.DataFrame]:
                 label = str(beds_baths).split("$", 1)[0].strip() or "unknown"
                 plans = [(label, float(m.group(1).replace(",", "")))]
 
-        explicit_sqft: Optional[float] = None
+        explicit_sqft: float | None = None
         if sqft_col is not None:
             v = pd.to_numeric(row[sqft_col], errors="coerce")
             if pd.notna(v):
@@ -165,7 +164,7 @@ def discover_scraped_listing_csvs() -> list[Path]:
     return found
 
 
-def clean_all_scraped_listings() -> Optional[pd.DataFrame]:
+def clean_all_scraped_listings() -> pd.DataFrame | None:
     """Clean every qualifying CSV in ``DIR_SCRAPED`` and concatenate."""
     import data_cleaning as _pkg
 

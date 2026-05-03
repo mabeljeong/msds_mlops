@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import pandas as pd
 
 
-def build_clean_dataset() -> Optional[pd.DataFrame]:
+def build_clean_dataset() -> pd.DataFrame | None:
     """
     Load and clean all sources; inner-join ZORI + ZHVI on (zip_code, date).
 
