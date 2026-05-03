@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rentiq"
+version = "0.1.0"
+description = "RentIQ rent prediction API and data pipeline."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = [".", "scripts"]
+addopts = "-ra"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["app", "scripts"]
+omit = [
+    "scripts/data_cleaning/__main__.py",
+    "scripts/upload_to_gcs.py",
+    "scripts/train_rent_predictor.py",
+    "scripts/register_mlflow_placeholder.py",
+    "scripts/mlflow_team_example.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+    ".venv",
+    "venv",
+    "mlruns",
+    "data",
+    "demo",
+    "notebooks",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",  # line length handled by formatter
+    "B008",  # FastAPI Depends() patterns rely on default-call-in-arg
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+"scripts/data_cleaning/__init__.py" = ["F401", "F403"]

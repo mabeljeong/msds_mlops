@@ -40,7 +40,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--subdir",
         default="raw",
-        choices=["raw", "processed", "features"],
+        choices=["raw", "processed", "features", "scraped"],
         help="Subdirectory of data/ to upload",
     )
     args = parser.parse_args()
