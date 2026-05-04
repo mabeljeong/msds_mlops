@@ -237,4 +237,4 @@ def test_root_returns_spa_or_banner(client):
         assert "<html" in r.text.lower() or "<!doctype" in r.text.lower()
     else:
         body = r.json()
-        assert body.get("service") == "RentIQ"
+        assert body.get("service") == "RentRadar"

@@ -71,7 +71,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="RentIQ API",
+    title="RentRadar API",
     description="Intelligent apartment recommendations — rent prediction service",
     lifespan=lifespan,
 )
@@ -99,8 +99,8 @@ def root() -> Any:
         # are picked up immediately after deploy.
         return FileResponse(index, headers={"Cache-Control": "no-store"})
     return {
-        "service": "RentIQ",
-        "message": "Welcome to the RentIQ ML inference API.",
+        "service": "RentRadar",
+        "message": "Welcome to the RentRadar ML inference API.",
     }
 
 

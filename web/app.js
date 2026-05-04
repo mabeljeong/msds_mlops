@@ -1,4 +1,4 @@
-/* RentIQ — single-page client.
+/* RentRadar — single-page client.
  *
  * Talks to the FastAPI service at the same origin (or http://localhost:8000 if served
  * from disk via file://). Pulls listings from /listings, then re-ranks via /rank
@@ -126,7 +126,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadListings();
   await rerank();
 
-  document.getElementById("rankBtn").addEventListener("click", rerank);
   document.getElementById("budget").addEventListener("change", rerank);
   document.getElementById("neighborhoodFilter").addEventListener("change", rerank);
 });
@@ -602,7 +601,7 @@ function priceStatus(it) {
   if (it.flag_overpriced || actual > p75) kind = "over";
   else if (actual < p25) kind = "under";
 
-  const baseLabel = kind === "over" ? "Overpriced" : kind === "under" ? "Under fair" : "Fair";
+  const baseLabel = kind === "over" ? "Overpriced" : kind === "under" ? "Good deal" : "Fair price";
   const label = hasBand ? baseLabel : `${baseLabel} (est.)`;
   const tooltip = hasBand
     ? `Actual $${Math.round(actual)} vs fair band $${Math.round(p25)}–$${Math.round(p75)}`
