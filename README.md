@@ -9,9 +9,7 @@ The app loads environment variables from a **`.env` file in the repo root** (via
 
 ## Demo
 
-Screen recording of the RentIQ UI and API ([`demo.mov`](demo.mov)).
-
-<video src="./demo.mov" controls playsinline width="100%"></video>
+Screen recording of the RentIQ UI and API: **[open on Google Drive](https://drive.google.com/file/d/1VZnCJNUvVCCqqr_wUjOg1ab2VWwmtMp5/view?usp=sharing)**.
 
 ---
 
