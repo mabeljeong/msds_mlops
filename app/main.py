@@ -95,7 +95,9 @@ def root() -> Any:
     """Serve the SPA when present; otherwise return the JSON service banner."""
     index = WEB_DIR / "index.html"
     if index.exists():
-        return FileResponse(index)
+        # Ensure the SPA shell is always revalidated so updated skin/assets
+        # are picked up immediately after deploy.
+        return FileResponse(index, headers={"Cache-Control": "no-store"})
     return {
         "service": "RentIQ",
         "message": "Welcome to the RentIQ ML inference API.",
