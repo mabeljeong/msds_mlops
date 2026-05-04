@@ -7,6 +7,12 @@ FastAPI service for rent prediction and a single-page web UI. Endpoints: `/`, `/
 
 The app loads environment variables from a **`.env` file in the repo root** (via `python-dotenv`). If `MLFLOW_MODEL_URI` is missing or loading fails, it uses a **placeholder** predictor (fine for demos; not the trained XGBoost bundle).
 
+## Demo
+
+Screen recording of the RentIQ UI and API ([`demo.mov`](demo.mov)).
+
+<video src="./demo.mov" controls playsinline width="100%"></video>
+
 ---
 
 ## Run locally (no Docker)
