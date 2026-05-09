@@ -30,7 +30,17 @@ logging.basicConfig(level=logging.INFO)
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
-WEB_DIR = ROOT / "web"
+
+# Frontend resolution order:
+#   1) React production build at `frontend/dist/` (built by Vite, used in
+#      Docker / Cloud Run via the multi-stage Dockerfile).
+#   2) Legacy vanilla SPA at `web/` (kept as a fallback during the React
+#      migration so contributors without a Node toolchain can still serve
+#      *something* via uvicorn).
+REACT_DIST_DIR = ROOT / "frontend" / "dist"
+LEGACY_WEB_DIR = ROOT / "web"
+WEB_DIR = REACT_DIST_DIR if REACT_DIST_DIR.exists() else LEGACY_WEB_DIR
+
 LISTINGS_FIXTURE = ROOT / "demo" / "listings_for_rank.json"
 
 
@@ -86,8 +96,12 @@ app.add_middleware(
 
 
 # ----- Static frontend ---------------------------------------------------- #
-if WEB_DIR.exists():
-    app.mount("/web", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
+# Legacy /web mount is kept so contributors who haven't built the React app
+# yet can still load the original vanilla SPA via /web/index.html (handy for
+# local debugging during the React migration). The new React build, when
+# present, takes over the root path below.
+if LEGACY_WEB_DIR.exists():
+    app.mount("/web", StaticFiles(directory=str(LEGACY_WEB_DIR), html=True), name="legacy-web")
 
 
 @app.get("/")
@@ -96,7 +110,9 @@ def root() -> Any:
     index = WEB_DIR / "index.html"
     if index.exists():
         # Ensure the SPA shell is always revalidated so updated skin/assets
-        # are picked up immediately after deploy.
+        # are picked up immediately after deploy. The hashed asset bundles
+        # under /assets/... are still aggressively cacheable (handled by the
+        # StaticFiles mount below).
         return FileResponse(index, headers={"Cache-Control": "no-store"})
     return {
         "service": "RentRadar",
@@ -198,4 +214,19 @@ async def rank(request: Request, body: RankRequest) -> RankResponse:
         n_input=len(raw_listings),
         n_returned=len(results),
         results=results,
+    )
+
+
+# ----- Static asset catch-all -------------------------------------------- #
+# Mount the React build at root so Vite's hashed bundle paths
+# (e.g. /assets/index-abc123.js) resolve. This must come AFTER every
+# explicit @app.get/@app.post route above; Starlette matches routes in
+# registration order, so the explicit API endpoints win against this
+# catch-all mount. When no React build exists yet, this no-ops and the
+# legacy /web mount above still serves the vanilla SPA.
+if REACT_DIST_DIR.exists():
+    app.mount(
+        "/",
+        StaticFiles(directory=str(REACT_DIST_DIR), html=True),
+        name="spa",
     )
