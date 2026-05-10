@@ -1,16 +1,48 @@
 .git
-.gitignore
+.github
 .venv
 venv
 __pycache__
 *.py[cod]
-*.egg-info
 .pytest_cache
 .mypy_cache
 .ruff_cache
+mlruns
+.DS_Store
+.env
+.env.*
+data/raw
+data/processed
+data/features
+data/scraped
+models
+artifacts
+checkpoints
+*.pkl
+*.joblib
+*.parquet
+*.feather
+*.h5
+*.onnx
+*.pt
+*.pth
+
+# Frontend: only the build output (frontend/dist/) needs to be copied,
+# and that's produced inside the build stage from frontend/ source. Skip
+# heavy local artifacts.
+frontend/node_modules
+frontend/dist
+frontend/.vite
+
+# Tests / scripts not needed at runtime
+tests
+scrape
+docs
+*.md
+!README.md
+
+# Editor / OS noise
 .idea
 .vscode
-*.md
-.DS_Store
-mlruns
-*.pdf
+.cursor
+*.Zone.Identifier
