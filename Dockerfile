@@ -16,7 +16,7 @@ RUN npm run build
 
 
 # --- Stage 2: the FastAPI image ----------------------------------------- #
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 WORKDIR /app
 
